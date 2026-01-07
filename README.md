@@ -1,0 +1,2 @@
+# astrbot_plugin_group_digest
+基于Astrbot与QQ的插件，用于将群聊里的消息进行过滤汇总定时汇报
