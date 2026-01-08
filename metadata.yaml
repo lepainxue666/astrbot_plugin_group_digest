@@ -19,7 +19,8 @@ tags:
 summary: 自动过滤群聊噪音，汇总真正重要的消息并私聊提醒
 
 #  插件仓库地址
-repo_url: https://github.com/lepainxue666/astrbot_plugin_group_digest
+repo: https://github.com/lepainxue666/astrbot_plugin_group_digest
 
 # 插件文档地址
-doc_url: https://github.com/lepainxue666/astrbot_plugin_group_digest#readme
+doc: https://github.com/lepainxue666/astrbot_plugin_group_digest#readme
+
