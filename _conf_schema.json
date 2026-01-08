@@ -1,0 +1,25 @@
+{
+  "enable_daily_digest": {
+    "description": "是否每天定时向好友私聊发送重要消息汇总",
+    "type": "boolean",
+    "default": true
+  },
+  "daily_digest_time": {
+    "description": "每日自动汇总发送的时间（24小时制，HH:MM）",
+    "type": "string",
+    "default": "21:00",
+    "hint": "格式：HH:MM，例如 21:00"
+  },
+  "max_query_days": {
+    "description": "主动查询“最近重要消息 X天”时允许的最大天数",
+    "type": "int",
+    "default": 7,
+    "hint": "范围：1-30天"
+  },
+  "user_id": {
+    "description": "接收汇总的用户QQ号（留空则自动识别第一个在群里说话的用户）",
+    "type": "string",
+    "default": "",
+    "hint": "填写你的QQ号，例如：123456789"
+  }
+}
