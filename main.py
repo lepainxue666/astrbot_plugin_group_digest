@@ -1,53 +1,84 @@
+import time
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Dict
 
-from astrbot.api.event import GroupMessageEvent, PrivateMessageEvent
-from astrbot.api.star import Star, register
-from astrbot.api.context import Context
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import filter
+from astrbot.api.message_components import Plain, At
+from astrbot.api.star import Context, Star, register
+
+
+# 内存缓存（最小可用版，后面可换 SQLite）
+IMPORTANT_MESSAGES: List[Dict] = []
 
 
 @register(
-    name="astrbot_plugin_group_digest",
-    description="群重要消息自动记录与汇总",
-    version="0.1.0",
-    author="xue Lepain"
+    "GroupDigest",
+    "xueLepain",
+    "群重要消息自动记录与汇总",
+    "0.1",
 )
 class GroupDigestPlugin(Star):
-    def __init__(self, context: Context):
+
+    def __init__(self, context: Context, config=None):
         super().__init__(context)
-        # 内存存储（最小可用，后续可换 sqlite）
-        self.records: List[dict] = []
+        self.config = config or {}
+        logger.info("GroupDigest 插件已加载")
 
-    # ========== 群消息监听 ==========
-    async def on_group_message(self, event: GroupMessageEvent):
-        msg = event.message
-        sender = event.sender
-        group = event.group
+    # =========================
+    # 群消息监听
+    # =========================
+    @filter.event_message_type(filter.EventMessageType.GROUP)
+    async def on_group_message(self, event: AstrMessageEvent):
+        """
+        监听所有群消息，记录重要消息
+        """
+        message = event.message_obj.message
+        group_id = event.get_group_id()
+        sender_id = event.get_sender_id()
+        sender_name = event.get_sender_name()
 
-        is_at_me = event.is_at_me
-        is_at_all = event.is_at_all
+        is_important = False
+        text_content = ""
 
-        if not (is_at_me or is_at_all):
-            return  # 非重要消息直接忽略
+        for comp in message:
+            if isinstance(comp, Plain):
+                text_content += comp.text
+            elif isinstance(comp, At):
+                # @全体 或 @我
+                if comp.qq == "all" or str(comp.qq) == str(event.get_self_id()):
+                    is_important = True
 
-        record = {
-            "group_id": group.id,
-            "group_name": group.name,
-            "sender_id": sender.id,
-            "sender_name": sender.nickname,
-            "content": msg.plain_text,
-            "time": datetime.now(),
-        }
+        if not is_important:
+            return
 
-        self.records.append(record)
+        IMPORTANT_MESSAGES.append({
+            "time": time.time(),
+            "group_id": group_id,
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "content": text_content.strip(),
+        })
 
-    # ========== 私聊指令 ==========
-    async def on_private_message(self, event: PrivateMessageEvent):
-        text = event.message.plain_text.strip()
+        logger.info(f"记录重要消息: {sender_name} @ 群 {group_id}")
+
+    # =========================
+    # 私聊命令：最近重要消息
+    # =========================
+    @filter.event_message_type(filter.EventMessageType.PRIVATE)
+    async def on_private_message(self, event: AstrMessageEvent):
+        message = event.message_obj.message
+        text = ""
+
+        for comp in message:
+            if isinstance(comp, Plain):
+                text += comp.text.strip()
 
         if not text.startswith("最近重要消息"):
             return
 
+        # 默认 1 天
         days = 1
         parts = text.split()
         if len(parts) >= 2:
@@ -56,19 +87,24 @@ class GroupDigestPlugin(Star):
             except ValueError:
                 pass
 
-        since = datetime.now() - timedelta(days=days)
-        msgs = [r for r in self.records if r["time"] >= since]
+        since = time.time() - days * 86400
+        records = [m for m in IMPORTANT_MESSAGES if m["time"] >= since]
 
-        if not msgs:
-            await event.reply("📭 最近没有记录到重要消息")
+        if not records:
+            await self.context.send_message(
+                event.get_session_id(),
+                "最近没有重要消息 🙂"
+            )
             return
 
-        lines = [f"📌 最近 {days} 天的重要消息：\n"]
-        for r in msgs[-20:]:
+        lines = []
+        for m in records[-20:]:
+            t = datetime.fromtimestamp(m["time"]).strftime("%m-%d %H:%M")
             lines.append(
-                f"[{r['time'].strftime('%m-%d %H:%M')}] "
-                f"{r['group_name']} / {r['sender_name']}：\n"
-                f"{r['content']}\n"
+                f"[{t}] {m['sender_name']}：{m['content']}"
             )
 
-        await event.reply("\n".join(lines))
+        await self.context.send_message(
+            event.get_session_id(),
+            "\n".join(lines)
+        )
