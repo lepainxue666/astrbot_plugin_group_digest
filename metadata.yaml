@@ -7,7 +7,7 @@ main: main.py
 license: MIT
 
 # 插件最低 AstrBot 版本要求（可选但推荐）
-astrbot_version: ">=0.6.0"
+astrbot_version: ">=4.10.8"
 
 # 插件标签（用于插件市场展示，可选）
 tags:
@@ -17,3 +17,4 @@ tags:
 
 # 插件简介（插件市场列表页展示，建议简短）
 summary: 自动过滤群聊噪音，汇总真正重要的消息并私聊提醒
+
