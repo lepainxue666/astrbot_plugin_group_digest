@@ -6,13 +6,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 
-@register(
-    "GroupDigest",
-    "xueLepain",
-    "群重要消息自动记录与汇总",
-    "0.1.0",
-    "https://github.com/lepainxue666/astrbot_plugin_group_digest",
-)
+@register("GroupDigest", "xueLepain", "群重要消息自动记录与汇总", "0.1.0", "https://github.com/lepainxue666/astrbot_plugin_group_digest")
 class GroupDigest(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
