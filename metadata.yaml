@@ -1,0 +1,19 @@
+name: astrbot_plugin_group_digest
+version: 0.1.0
+author: xue Lepain
+description: 群重要消息自动记录与汇总插件，支持 @你/@全体 识别、定时推送与主动查询
+type: plugin
+main: main.py
+license: MIT
+
+# 插件最低 AstrBot 版本要求（可选但推荐）
+astrbot_version: ">=0.6.0"
+
+# 插件标签（用于插件市场展示，可选）
+tags:
+  - 群管理
+  - 消息汇总
+  - 提醒
+
+# 插件简介（插件市场列表页展示，建议简短）
+summary: 自动过滤群聊噪音，汇总真正重要的消息并私聊提醒
