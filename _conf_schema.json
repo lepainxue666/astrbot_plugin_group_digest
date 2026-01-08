@@ -1,7 +1,7 @@
 {
   "enable_daily_digest": {
     "description": "是否每天定时向好友私聊发送重要消息汇总",
-    "type": "boolean",
+    "type": "bool",
     "default": true
   },
   "daily_digest_time": {
