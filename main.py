@@ -18,6 +18,7 @@ IMPORTANT_MESSAGES: List[Dict] = []
     "xueLepain",
     "群重要消息自动记录与汇总",
     "0.1",
+    "https://github.com/lepainxue666/astrbot_plugin_group_digest”，
 )
 class GroupDigestPlugin(Star):
 
@@ -108,3 +109,4 @@ class GroupDigestPlugin(Star):
             event.get_session_id(),
             "\n".join(lines)
         )
+
