@@ -2,9 +2,9 @@ import asyncio
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from astrbot.api.star import Context, Star, register
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api import logger
+from astrbot.api.star import Context, Star, register
 
 @register(
     "GroupDigest",
@@ -14,20 +14,24 @@ from astrbot.api import logger
     "https://github.com/lepainxue666/astrbot_plugin_group_digest",
 )
 class GroupDigest(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.config = self.get_config()
+        self.config = config
         self.user_id = self.config.get("user_id", "")
-        self._init_storage()
-        self._start_daily_digest_task()
+        self.message_list = []
+        self.last_digest_date = ""
 
-    def _init_storage(self):
+    async def initialize(self):
+        """插件初始化方法"""
         self.message_list = self.get_kv_data("message_list", [])
         self.last_digest_date = self.get_kv_data("last_digest_date", "")
-
-    def _start_daily_digest_task(self):
+        logger.info("群消息汇总插件：初始化成功")
+        
         if self.config.get("enable_daily_digest", True):
             asyncio.create_task(self._daily_digest_loop())
+            logger.info(f"群消息汇总插件：每日汇总已启用，时间：{self.config.get('daily_digest_time', '21:00')}")
+        else:
+            logger.info("群消息汇总插件：每日汇总已禁用")
 
     async def _daily_digest_loop(self):
         while True:
