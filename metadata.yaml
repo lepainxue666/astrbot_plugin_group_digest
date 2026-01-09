@@ -1,0 +1,9 @@
+name: astrbot_plugin_group_digest
+desc: 基于 LLM 的群聊总结与定时归档插件，支持指定关注话题
+help: |
+  输入 /消息总结 <条数> [关注话题] 或 /群总结 <条数> <群号> [关注话题] 触发；
+  可在 WebUI 配置自动总结与限制。
+  示例：/消息总结 50 技术讨论
+version: v0.1.0
+author: xue
+repo: https://github.com/lepainxue666/astrbot_plugin_group_digest
