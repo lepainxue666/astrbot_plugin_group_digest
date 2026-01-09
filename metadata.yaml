@@ -1,5 +1,6 @@
 name: astrbot_plugin_group_digest
 desc: 群重要消息自动记录与汇总插件，支持 @你/@全体 识别、定时推送与主动查询
 version: v0.1.0
-author: xue Lepain
+author: xue
 repo: https://github.com/lepainxue666/astrbot_plugin_group_digest # 插件的仓库地址
+
