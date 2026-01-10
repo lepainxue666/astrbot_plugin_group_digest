@@ -30,12 +30,12 @@
       "enabled": {
         "description": "开启自动总结",
         "type": "bool",
-        "default": false
+        "default": true
       },
       "interval_minutes": {
         "description": "执行间隔(分钟)",
         "type": "int",
-        "default": 60,
+        "default": 30,
         "hint": "定时任务的轮询间隔"
       },
       "target_groups": {
@@ -50,7 +50,7 @@
       "time_window_minutes": {
         "description": "时间窗口(分钟)",
         "type": "int",
-        "default": 15,
+        "default": 1440,
         "hint": "按时间窗口分段时的窗口大小（分钟）"
       },
       "min_messages": {
