@@ -48,7 +48,7 @@
       "enabled": {
         "description": "开启自动总结",
         "type": "bool",
-        "default": true
+        "default": false
       },
       "interval_minutes": {
         "description": "执行间隔(分钟)",
@@ -86,7 +86,7 @@
       "enabled": {
         "description": "开启免打扰模式",
         "type": "bool",
-        "default": false,
+        "default": true,
         "hint": "启用后，在指定时间段内自动拒绝所有消息（白名单除外）"
       },
       "start_time": {
