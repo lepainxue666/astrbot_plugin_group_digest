@@ -30,7 +30,7 @@
       "use_global_personality": {
         "description": "使用 AstrBot 全局人格设定",
         "type": "bool",
-        "default": false,
+        "default": true,
         "hint": "启用后将使用 AstrBot 平台配置的全局人格设定进行总结"
       },
       "system_prompt": {
@@ -92,13 +92,13 @@
       "start_time": {
         "description": "开始时间",
         "type": "string",
-        "default": "22:00",
+        "default": "08:00",
         "hint": "免打扰模式开始时间，格式：HH:MM"
       },
       "end_time": {
         "description": "结束时间",
         "type": "string",
-        "default": "08:00",
+        "default": "22:00",
         "hint": "免打扰模式结束时间，格式：HH:MM"
       },
       "whitelist": {
