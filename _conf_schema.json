@@ -1,0 +1,121 @@
+{
+  "limits": {
+    "description": "限制：控制一次拉取的记录数量和模型输出长度",
+    "type": "object",
+    "items": {
+      "max_chat_records": {
+        "description": "聊天记录条数上限",
+        "type": "int",
+        "default": 200,
+        "hint": "建议 100~1500，过大可能导致接口变慢或超时"
+      },
+      "max_input_chars": {
+        "description": "发送给 LLM 的上下文最大字符数",
+        "type": "int",
+        "default": 20000,
+        "hint": "用于裁剪聊天记录输入，避免超出模型上下文窗口；0 表示不裁剪（不推荐）"
+      },
+      "max_tokens": {
+        "description": "LLM 输出 token 上限",
+        "type": "int",
+        "default": 2000,
+        "hint": "粗略对应输出字符数：token * 4"
+      }
+    }
+  },
+  "personality": {
+    "description": "人格设定",
+    "type": "object",
+    "items": {
+      "use_global_personality": {
+        "description": "使用 AstrBot 全局人格设定",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后将使用 AstrBot 平台配置的全局人格设定进行总结"
+      },
+      "system_prompt": {
+        "description": "System Prompt（系统提示词）",
+        "type": "text",
+        "default": "",
+        "hint": "当使用全局人格设定时，此字段将被忽略。请在此处输入 AI 的人格设定，例如：你是一位大学教授，专业、耐心、学术。"
+      }
+    }
+  },
+  "auto_summary": {
+    "description": "自动总结设置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启自动总结",
+        "type": "bool",
+        "default": false
+      },
+      "interval_minutes": {
+        "description": "执行间隔(分钟)",
+        "type": "int",
+        "default": 30,
+        "hint": "定时任务的轮询间隔"
+      },
+      "target_groups": {
+        "description": "需要自动总结的群号",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": ["656843194"],
+        "hint": "支持多个群号，可用逗号或换行分隔"
+      },
+      "time_window_minutes": {
+        "description": "时间窗口(分钟)",
+        "type": "int",
+        "default": 1440,
+        "hint": "按时间窗口分段时的窗口大小（分钟）"
+      },
+      "min_messages": {
+        "description": "最少消息数",
+        "type": "int",
+        "default": 1,
+        "hint": "新消息数量少于此值时跳过总结，避免频繁触发"
+      }
+    }
+  },
+  "dnd_mode": {
+    "description": "免打扰模式",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启免打扰模式",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后，在指定时间段内自动拒绝所有消息（白名单除外）"
+      },
+      "start_time": { 
+        "description": "开始时间",
+        "type": "string",
+        "default": "08:00",
+        "hint": "免打扰模式开始时间，格式：HH:MM"
+      },
+      "end_time": {
+        "description": "结束时间",
+        "type": "string",
+        "default": "23:00",
+        "hint": "免打扰模式结束时间，格式：HH:MM"
+      },
+      "whitelist": {
+        "description": "白名单",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "白名单中的 QQ 号不受免打扰模式限制，支持多个 QQ 号"
+      },
+      "auto_reply": {
+        "description": "自动回复消息",
+        "type": "text",
+        "default": "抱歉，我现在正在专心工作，稍后回复您。",
+        "hint": "免打扰模式下的自动回复消息"
+      }
+    }
+  }
+}
