@@ -36,7 +36,7 @@ _TYPE_DEFAULTS = {
     "astrbot_plugin_group_digest",
     "xue",
     "基于 LLM 的群聊总结与定时归档插件",
-    "0.1.3",
+    "0.1.4",
 )
 class ChatSummary(Star):
     CONFIG_NAMESPACE = "astrbot_plugin_chatsummary_v2"
@@ -236,6 +236,7 @@ class ChatSummary(Star):
         group_id: str | int,
         *,
         count: int,
+        umo: str | None = None,
     ) -> Tuple[str, List[dict]]:
         payloads = {
             "group_id": self._normalize_group_id(group_id),
@@ -276,7 +277,16 @@ class ChatSummary(Star):
                 },
             )
 
-        return "\n".join(chat_lines), structured
+        # 过滤骚扰消息
+        filtered_structured = await self._filter_spam_messages(structured, umo)
+        
+        # 重新生成 chat_lines
+        filtered_chat_lines = [
+            f"[{msg['time']}]「{msg['nickname']}」: {msg['text']}"
+            for msg in filtered_structured
+        ]
+
+        return "\n".join(filtered_chat_lines), filtered_structured
 
     async def _flatten_message_parts(self, parts: Sequence[dict], client=None) -> str:
         buffers: List[str] = []
@@ -880,6 +890,72 @@ class ChatSummary(Star):
         dnd_config = self.settings.get("dnd_mode", {})
         return dnd_config.get("auto_reply", "抱歉，我现在正在专心工作，稍后回复您。")
 
+    def _contains_keywords(self, text: str) -> bool:
+        """检查文本是否包含关键词"""
+        keyword_config = self.settings.get("keyword_filter", {})
+        if not keyword_config.get("enabled", True):
+            return False
+        
+        keywords = keyword_config.get("keywords", ["刷单", "加微信"])
+        text_lower = text.lower()
+        return any(keyword.lower() in text_lower for keyword in keywords)
+
+    async def _is_spam_message(self, text: str, umo: str | None = None) -> bool:
+        """使用 LLM 判断消息是否为骚扰消息"""
+        keyword_config = self.settings.get("keyword_filter", {})
+        if not keyword_config.get("enabled", True):
+            return False
+        
+        provider = self.context.get_using_provider(umo=umo)
+        if not provider:
+            return False
+        
+        prompt = (
+            "请判断以下消息是否为骚扰消息。骚扰消息包括但不限于：刷单、兼职、加微信拉群、推广广告等。\n"
+            "如果是骚扰消息，请回复 '是'；如果不是，请回复 '否'。\n\n"
+            f"消息内容：{text}"
+        )
+        
+        contexts = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        try:
+            response = await provider.text_chat(contexts=contexts, max_tokens=10)
+            completion = response.completion_text.strip()
+            return completion.lower() == "是"
+        except Exception as exc:
+            logger.error("LLM 判断骚扰消息失败: %s", exc)
+            return False
+
+    async def _filter_spam_messages(self, messages: List[dict], umo: str | None = None) -> List[dict]:
+        """过滤骚扰消息"""
+        keyword_config = self.settings.get("keyword_filter", {})
+        if not keyword_config.get("enabled", True):
+            return messages
+        
+        filtered_messages = []
+        for msg in messages:
+            text = msg.get("text", "")
+            if not text:
+                filtered_messages.append(msg)
+                continue
+            
+            # 检查是否包含关键词
+            if self._contains_keywords(text):
+                # 使用 LLM 判断是否为骚扰消息
+                is_spam = await self._is_spam_message(text, umo)
+                if is_spam:
+                    logger.info("过滤骚扰消息: %s", text[:50] + "..." if len(text) > 50 else text)
+                    continue
+            
+            filtered_messages.append(msg)
+        
+        return filtered_messages
+
     # ------------------------------------------------------------------
     # Message handlers
     # ------------------------------------------------------------------
@@ -939,6 +1015,7 @@ class ChatSummary(Star):
             ai_event.bot,
             event.get_group_id(),
             count=count_value,
+            umo=event.unified_msg_origin,
         )
 
         if not chat_text:
@@ -1009,6 +1086,7 @@ class ChatSummary(Star):
             client,
             group_id,
             count=count_value,
+            umo=event.unified_msg_origin,
         )
 
         if not chat_text:
@@ -1168,6 +1246,7 @@ class ChatSummary(Star):
                     client,
                     group_id,
                     count=max_records,
+                    umo=None,
                 )
             except Exception as exc:
                 logger.error("拉取群 %s 聊天记录失败：%s", group_id, exc)
