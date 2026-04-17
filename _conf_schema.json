@@ -76,6 +76,12 @@
         "type": "int",
         "default": 1,
         "hint": "新消息数量少于此值时跳过总结，避免频繁触发"
+      },
+      "summary_time_range": {
+        "description": "总结时间范围(分钟)",
+        "type": "int",
+        "default": 1440,
+        "hint": "只总结最近多少分钟内的消息，0 表示不限制"
       }
     }
   },

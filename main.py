@@ -237,6 +237,7 @@ class ChatSummary(Star):
         *,
         count: int,
         umo: str | None = None,
+        time_range: int | None = None,
     ) -> Tuple[str, List[dict]]:
         payloads = {
             "group_id": self._normalize_group_id(group_id),
@@ -251,6 +252,8 @@ class ChatSummary(Star):
 
         chat_lines: List[str] = []
         structured: List[dict] = []
+        now = datetime.now()
+        
         for msg in messages:
             sender = msg.get("sender", {}) or {}
             sender_id = str(sender.get("user_id", ""))
@@ -259,6 +262,13 @@ class ChatSummary(Star):
 
             nickname = sender.get("card") or sender.get("nickname") or "未知用户"
             msg_time = datetime.fromtimestamp(msg.get("time", 0))
+            
+            # 过滤时间范围
+            if time_range and time_range > 0:
+                time_diff = (now - msg_time).total_seconds() / 60
+                if time_diff > time_range:
+                    continue
+
             message_text = await self._flatten_message_parts(msg.get("message", []) or [], client)
 
             if not message_text:
@@ -1226,6 +1236,7 @@ class ChatSummary(Star):
         max_output_tokens = self._as_int(settings.get("limits", {}).get("max_tokens"), 2000)
         max_input_chars = self._as_int(settings.get("limits", {}).get("max_input_chars"), 20000)
         window_minutes = max(1, int(auto_cfg.get("time_window_minutes", 15)))
+        summary_time_range = int(auto_cfg.get("summary_time_range", 1440))
         broadcast_value = auto_cfg.get("broadcast", True)
         # 支持布尔值和字符串值
         if isinstance(broadcast_value, bool):
@@ -1247,6 +1258,7 @@ class ChatSummary(Star):
                     group_id,
                     count=max_records,
                     umo=None,
+                    time_range=summary_time_range,
                 )
             except Exception as exc:
                 logger.error("拉取群 %s 聊天记录失败：%s", group_id, exc)
