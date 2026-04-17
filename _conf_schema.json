@@ -89,7 +89,7 @@
         "default": true,
         "hint": "启用后，在指定时间段内自动拒绝所有消息（白名单除外）"
       },
-      "start_time": { 
+      "start_time": {
         "description": "开始时间",
         "type": "string",
         "default": "08:00",
@@ -115,6 +115,33 @@
         "type": "text",
         "default": "抱歉，我现在正在专心工作，稍后回复您。",
         "hint": "免打扰模式下的自动回复消息"
+      }
+    }
+  },
+  "keyword_filter": {
+    "description": "关键词过滤",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启关键词过滤",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后，会检测消息中的关键词并过滤骚扰消息"
+      },
+      "keywords": {
+        "description": "需要检测的关键词",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": ["刷单", "加微信"],
+        "hint": "检测到这些关键词的消息会被提交给 LLM 判断是否为骚扰消息"
+      },
+      "llm_threshold": {
+        "description": "LLM 判断阈值",
+        "type": "float",
+        "default": 0.7,
+        "hint": "LLM 判断为骚扰消息的概率阈值，超过此值则过滤"
       }
     }
   }
