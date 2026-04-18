@@ -290,13 +290,16 @@ class ChatSummary(Star):
         # 过滤骚扰消息
         filtered_structured = await self._filter_spam_messages(structured, umo)
         
+        # 过滤重要消息
+        important_structured = await self._filter_important_messages(filtered_structured, umo)
+        
         # 重新生成 chat_lines
         filtered_chat_lines = [
             f"[{msg['time']}]「{msg['nickname']}」: {msg['text']}"
-            for msg in filtered_structured
+            for msg in important_structured
         ]
 
-        return "\n".join(filtered_chat_lines), filtered_structured
+        return "\n".join(filtered_chat_lines), important_structured
 
     async def _flatten_message_parts(self, parts: Sequence[dict], client=None) -> str:
         buffers: List[str] = []
@@ -941,6 +944,40 @@ class ChatSummary(Star):
             logger.error("LLM 判断骚扰消息失败: %s", exc)
             return False
 
+    async def _is_important_message(self, text: str, umo: str | None = None) -> bool:
+        """判断消息是否为重要消息"""
+        # 首先进行关键词匹配
+        keywords = ["通知", "公告", "重要", "紧急", "提醒", "注意", "要求", "安排", "会议"]
+        text_lower = text.lower()
+        if not any(keyword.lower() in text_lower for keyword in keywords):
+            return False
+        
+        # 然后使用 LLM 进行判断
+        provider = self.context.get_using_provider(umo=umo)
+        if not provider:
+            return True  # 如果没有 LLM  provider，默认认为是重要消息
+        
+        prompt = (
+            "请判断以下消息是否为重要消息。重要消息包括但不限于：通知、公告、重要事项、紧急通知、提醒、注意事项、要求、安排、会议等。\n"
+            "如果是重要消息，请回复 '是'；如果不是，请回复 '否'。\n\n"
+            f"消息内容：{text}"
+        )
+        
+        contexts = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        try:
+            response = await provider.text_chat(contexts=contexts, max_tokens=10)
+            completion = response.completion_text.strip()
+            return completion.lower() == "是"
+        except Exception as exc:
+            logger.error("LLM 判断重要消息失败: %s", exc)
+            return True  # 出错时默认认为是重要消息
+
     async def _filter_spam_messages(self, messages: List[dict], umo: str | None = None) -> List[dict]:
         """过滤骚扰消息"""
         keyword_config = self.settings.get("keyword_filter", {})
@@ -965,6 +1002,18 @@ class ChatSummary(Star):
             filtered_messages.append(msg)
         
         return filtered_messages
+
+    async def _filter_important_messages(self, messages: List[dict], umo: str | None = None) -> List[dict]:
+        """过滤重要消息"""
+        # 默认启用重要消息过滤
+        important_messages = []
+        for msg in messages:
+            text = msg.get("text", "")
+            if await self._is_important_message(text, umo):
+                important_messages.append(msg)
+                logger.info("保留重要消息: %s", text[:50] + "..." if len(text) > 50 else text)
+        
+        return important_messages
 
     # ------------------------------------------------------------------
     # Message handlers
@@ -991,6 +1040,50 @@ class ChatSummary(Star):
         event.stop_event()
         
         logger.info("免打扰模式：已自动回复用户 %s", sender_id)
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_group_message(self, event: AstrMessageEvent):
+        """处理群聊消息，响应@消息和@全体成员消息"""
+        self._reload_settings()
+        
+        # 获取消息内容
+        message_text = event.get_content()
+        if not message_text:
+            return
+        
+        # 检查是否@了机器人
+        if not self._is_mentioned(event):
+            # 检查是否@全体成员
+            if self._is_at_all(message_text):
+                # 检查是否需要回复收到
+                if self._needs_acknowledge(message_text):
+                    yield event.plain_result("收到")
+                    event.stop_event()
+                    logger.info("群聊@全体成员：已回复收到")
+            return
+        
+        # 处理@消息（和私聊逻辑类似）
+        # 这里可以添加知识库查询逻辑
+        # 暂时只记录日志
+        sender_id = event.get_sender_id()
+        group_id = event.get_group_id()
+        logger.info("群聊@消息：用户 %s 在群 %s 中@了机器人，消息内容：%s", sender_id, group_id, message_text[:50])
+
+    def _is_mentioned(self, event: AstrMessageEvent) -> bool:
+        """检查消息是否@了机器人"""
+        # 这里需要根据实际的消息格式来判断
+        # 对于CQ码格式，检查是否包含[at,qq=机器人QQ号]
+        message_text = event.get_content()
+        return "@" in message_text
+
+    def _is_at_all(self, text: str) -> bool:
+        """检查消息是否@了全体成员"""
+        return "@全体成员" in text or "@all" in text
+
+    def _needs_acknowledge(self, text: str) -> bool:
+        """检查是否需要回复收到"""
+        keywords = ["收到", "确认", "回复", "签到"]
+        return any(keyword in text for keyword in keywords)
 
     # ------------------------------------------------------------------
     # Command handlers
