@@ -967,6 +967,17 @@ class ChatSummary(Star):
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def handle_private_message(self, event: AstrMessageEvent):
         """处理私聊消息，实现免打扰模式"""
+        async for result in self._handle_dnd_message(event):
+            yield result
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_group_message(self, event: AstrMessageEvent):
+        """处理群聊消息，实现免打扰模式"""
+        async for result in self._handle_dnd_message(event):
+            yield result
+
+    async def _handle_dnd_message(self, event: AstrMessageEvent):
+        """处理免打扰消息"""
         self._reload_settings()
         
         if not self._is_dnd_time():
@@ -1025,13 +1036,25 @@ class ChatSummary(Star):
                     "role": "system",
                     "content": system_prompt
                 })
+            else:
+                # 默认系统提示词，确保回复风格一致
+                contexts.append({
+                    "role": "system",
+                    "content": "你是一位大学教授，专业、耐心、友善。当你忙碌时，需要礼貌地告知对方你现在有事，稍后会回复。请使用自然、口语化的语言，避免过于正式或生硬的表达。"
+                })
             
             prompt = (
-                f"你正在代替教授处理私人消息。现在有一个人({sender_name})给你发了一条消息：\n"
+                f"你现在正在忙碌，需要礼貌地告知对方你稍后会回复。\n\n"
+                f"对方({sender_name})发来了消息：\n"
                 f"「{message_text}」\n\n"
-                f"你需要回复这条消息，告知对方你目前正在忙，稍后会回复。\n"
-                f"请用自然、友好、简洁的语言回复，30字以内。\n"
-                f"不要使用任何格式符号（如#、*等），直接输出回复内容。"
+                f"请你：\n"
+                f"1. 礼貌地打招呼\n"
+                f"2. 简洁地说明你现在很忙\n"
+                f"3. 承诺稍后会回复\n"
+                f"4. 保持教授的专业、友善语气\n"
+                f"5. 使用自然、口语化的语言，避免生硬\n"
+                f"6. 控制在2-3句话，30字左右\n"
+                f"7. 直接输出回复内容，不要使用任何格式符号"
             )
             
             contexts.append({
@@ -1045,10 +1068,25 @@ class ChatSummary(Star):
             if completion:
                 return completion
             
-            return "抱歉，我现在有点事，稍后回复你。"
+            # 生成一些多样化的默认回复
+            default_replies = [
+                "抱歉，我现在有点事，稍后回复你。",
+                "同学好，我现在忙，稍后回复你。",
+                "你好，我现在有点忙，稍后再和你聊。",
+                "抱歉，我现在有事在忙，稍后回复你。"
+            ]
+            import random
+            return random.choice(default_replies)
         except Exception as exc:
             logger.error("生成免打扰回复失败: %s", exc)
-            return "抱歉，我现在有点事，稍后回复你。"
+            # 异常时也返回多样化的默认回复
+            default_replies = [
+                "抱歉，我现在有点事，稍后回复你。",
+                "同学好，我现在忙，稍后回复你。",
+                "你好，我现在有点忙，稍后再和你聊。"
+            ]
+            import random
+            return random.choice(default_replies)
 
     # ------------------------------------------------------------------
     # Command handlers
