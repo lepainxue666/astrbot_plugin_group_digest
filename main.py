@@ -992,6 +992,29 @@ class ChatSummary(Star):
         
         logger.info("免打扰模式：已自动回复用户 %s", sender_id)
 
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_group_message(self, event: AstrMessageEvent):
+        """处理群聊消息，实现免打扰模式"""
+        self._reload_settings()
+        
+        # 检查是否在免打扰时间段内
+        if not self._is_dnd_time():
+            return
+        
+        # 检查用户是否在白名单中
+        sender_id = event.get_sender_id()
+        if self._is_in_whitelist(sender_id):
+            return
+        
+        # 获取自动回复消息
+        auto_reply = self._get_dnd_auto_reply()
+        
+        # 发送自动回复
+        yield event.plain_result(auto_reply)
+        event.stop_event()
+        
+        logger.info("免打扰模式：已在群聊中自动回复用户 %s", sender_id)
+
     # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
