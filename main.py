@@ -1010,7 +1010,8 @@ class ChatSummary(Star):
     async def _generate_dnd_reply(self, sender_name: str, message_text: str) -> str:
         """使用 LLM 生成自然的免打扰回复"""
         try:
-            provider = self._get_llm_provider()
+            # 获取 LLM 提供者
+            provider = self.context.get_using_provider()
             if not provider:
                 return "抱歉，我现在有点事，稍后回复你。"
             
