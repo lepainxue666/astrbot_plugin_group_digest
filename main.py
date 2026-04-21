@@ -895,6 +895,11 @@ class ChatSummary(Star):
         user_id_str = str(user_id)
         return user_id_str in whitelist
 
+    def _get_dnd_auto_reply(self) -> str:
+        """获取免打扰模式的自动回复消息"""
+        dnd_config = self.settings.get("dnd_mode", {})
+        return dnd_config.get("auto_reply", "抱歉，我现在正在专心工作，稍后回复您。")
+
     def _contains_keywords(self, text: str) -> bool:
         """检查文本是否包含关键词"""
         keyword_config = self.settings.get("keyword_filter", {})
@@ -967,126 +972,25 @@ class ChatSummary(Star):
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def handle_private_message(self, event: AstrMessageEvent):
         """处理私聊消息，实现免打扰模式"""
-        async for result in self._handle_dnd_message(event):
-            yield result
-
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def handle_group_message(self, event: AstrMessageEvent):
-        """处理群聊消息，实现免打扰模式"""
-        async for result in self._handle_dnd_message(event):
-            yield result
-
-    async def _handle_dnd_message(self, event: AstrMessageEvent):
-        """处理免打扰消息"""
         self._reload_settings()
         
+        # 检查是否在免打扰时间段内
         if not self._is_dnd_time():
             return
         
+        # 检查用户是否在白名单中
         sender_id = event.get_sender_id()
         if self._is_in_whitelist(sender_id):
             return
         
-        sender_name = event.get_sender_name() or "对方"
+        # 获取自动回复消息
+        auto_reply = self._get_dnd_auto_reply()
         
-        # 获取消息文本的兼容处理
-        message_text = ""
-        try:
-            # 尝试不同的方法获取消息文本
-            if hasattr(event, 'get_plain_text'):
-                message_text = event.get_plain_text() or ""
-            elif hasattr(event, 'text'):
-                message_text = event.text or ""
-            elif hasattr(event, 'message'):
-                if isinstance(event.message, str):
-                    message_text = event.message or ""
-                elif isinstance(event.message, dict):
-                    message_text = event.message.get('text', '') or ""
-                elif isinstance(event.message, list):
-                    # 处理消息列表
-                    for part in event.message:
-                        if isinstance(part, dict) and part.get('type') == 'text':
-                            message_text += part.get('data', {}).get('text', '') or ""
-        except Exception as e:
-            logger.error("获取消息文本失败: %s", e)
-            message_text = ""
-        
-        auto_reply = await self._generate_dnd_reply(sender_name, message_text)
-        
+        # 发送自动回复
         yield event.plain_result(auto_reply)
         event.stop_event()
         
         logger.info("免打扰模式：已自动回复用户 %s", sender_id)
-
-    async def _generate_dnd_reply(self, sender_name: str, message_text: str) -> str:
-        """使用 LLM 生成自然的免打扰回复"""
-        try:
-            # 获取 LLM 提供者
-            provider = self.context.get_using_provider()
-            if not provider:
-                return "抱歉，我现在有点事，稍后回复你。"
-            
-            personality_config = self.settings.get("ai_personality", {})
-            use_personality = personality_config.get("use_global_personality", False)
-            system_prompt = personality_config.get("system_prompt", "")
-            
-            contexts = []
-            if use_personality and system_prompt:
-                contexts.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
-            else:
-                # 默认系统提示词，确保回复风格一致
-                contexts.append({
-                    "role": "system",
-                    "content": "你是一位大学教授，专业、耐心、友善。当你忙碌时，需要礼貌地告知对方你现在有事，稍后会回复。请使用自然、口语化的语言，避免过于正式或生硬的表达。"
-                })
-            
-            prompt = (
-                f"你现在正在忙碌，需要礼貌地告知对方你稍后会回复。\n\n"
-                f"对方({sender_name})发来了消息：\n"
-                f"「{message_text}」\n\n"
-                f"请你：\n"
-                f"1. 礼貌地打招呼\n"
-                f"2. 简洁地说明你现在很忙\n"
-                f"3. 承诺稍后会回复\n"
-                f"4. 保持教授的专业、友善语气\n"
-                f"5. 使用自然、口语化的语言，避免生硬\n"
-                f"6. 控制在2-3句话，30字左右\n"
-                f"7. 直接输出回复内容，不要使用任何格式符号"
-            )
-            
-            contexts.append({
-                "role": "user",
-                "content": prompt
-            })
-            
-            response = await provider.text_chat(contexts=contexts, max_tokens=100)
-            completion = response.completion_text.strip()
-            
-            if completion:
-                return completion
-            
-            # 生成一些多样化的默认回复
-            default_replies = [
-                "抱歉，我现在有点事，稍后回复你。",
-                "同学好，我现在忙，稍后回复你。",
-                "你好，我现在有点忙，稍后再和你聊。",
-                "抱歉，我现在有事在忙，稍后回复你。"
-            ]
-            import random
-            return random.choice(default_replies)
-        except Exception as exc:
-            logger.error("生成免打扰回复失败: %s", exc)
-            # 异常时也返回多样化的默认回复
-            default_replies = [
-                "抱歉，我现在有点事，稍后回复你。",
-                "同学好，我现在忙，稍后回复你。",
-                "你好，我现在有点忙，稍后再和你聊。"
-            ]
-            import random
-            return random.choice(default_replies)
 
     # ------------------------------------------------------------------
     # Command handlers
