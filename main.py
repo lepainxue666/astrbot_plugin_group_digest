@@ -977,7 +977,28 @@ class ChatSummary(Star):
             return
         
         sender_name = event.get_sender_name() or "对方"
-        message_text = event.get_plain_text() or ""
+        
+        # 获取消息文本的兼容处理
+        message_text = ""
+        try:
+            # 尝试不同的方法获取消息文本
+            if hasattr(event, 'get_plain_text'):
+                message_text = event.get_plain_text() or ""
+            elif hasattr(event, 'text'):
+                message_text = event.text or ""
+            elif hasattr(event, 'message'):
+                if isinstance(event.message, str):
+                    message_text = event.message or ""
+                elif isinstance(event.message, dict):
+                    message_text = event.message.get('text', '') or ""
+                elif isinstance(event.message, list):
+                    # 处理消息列表
+                    for part in event.message:
+                        if isinstance(part, dict) and part.get('type') == 'text':
+                            message_text += part.get('data', {}).get('text', '') or ""
+        except Exception as e:
+            logger.error("获取消息文本失败: %s", e)
+            message_text = ""
         
         auto_reply = await self._generate_dnd_reply(sender_name, message_text)
         
