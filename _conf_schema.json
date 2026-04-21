@@ -118,7 +118,7 @@
       }
     }
   },
-  "spam_filter": {
+  "keyword_filter": {
     "description": "关键词过滤",
     "type": "object",
     "items": {

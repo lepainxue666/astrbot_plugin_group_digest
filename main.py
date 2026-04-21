@@ -895,61 +895,6 @@ class ChatSummary(Star):
         user_id_str = str(user_id)
         return user_id_str in whitelist
 
-    async def _check_knowledge_base(self, query: str, umo: str = None) -> str | None:
-        """检查知识库中是否有相关信息
-        
-        Returns:
-            知识库中的答案，如果没有找到则返回 None
-        """
-        try:
-            from astrbot.core.platform import platform_manager
-            kb_tool = platform_manager.get_tool("astr_kb_search")
-            if kb_tool:
-                result = await kb_tool.arun(query=query)
-                if result and result.get("results"):
-                    return result["results"][0].get("content", "")
-        except Exception as e:
-            logger.warning("知识库检索失败: %s", e)
-        return None
-
-    async def _is_message_for_bot(self, message_text: str, sender_name: str, umo: str) -> bool:
-        """使用 LLM 判断消息是否是发给机器人的
-        
-        Returns:
-            True 如果是发给机器人的消息，False 否则
-        """
-        prompt = f"""请判断以下消息是否是发给AI助手的（即寻求AI回答的问题）。
-
-判断依据：
-- 消息直接@AI助手或使用机器人相关称呼
-- 消息是提问性质，期待得到回答
-- 消息明确要求AI执行操作
-
-当前消息：
-发送者：{sender_name}
-消息内容：{message_text}
-
-请只返回"是"或"否"，不要返回其他内容。"""
-
-        try:
-            result = await self._call_llm(prompt, umo=umo)
-            if result:
-                return "是" in result.strip()
-        except Exception as e:
-            logger.warning("LLM 判断消息用途失败: %s", e)
-        return False
-
-    def _generate_busy_reply(self) -> str:
-        """生成自然的忙碌回复"""
-        replies = [
-            "抱歉，我现在有点忙，稍后回复你。",
-            "我现在正在忙重要的事情，一会回你消息。",
-            "不好意思，正在处理事情，稍后联系。",
-            "抱歉暂时无法回复，我一会找你。",
-        ]
-        import random
-        return random.choice(replies)
-
     def _contains_keywords(self, text: str) -> bool:
         """检查文本是否包含关键词"""
         keyword_config = self.settings.get("keyword_filter", {})
@@ -1021,87 +966,67 @@ class ChatSummary(Star):
     # ------------------------------------------------------------------
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def handle_private_message(self, event: AstrMessageEvent):
-        """处理私聊消息，实现免打扰模式
-        
-        规则：
-        - 免打扰关闭时：不作任何发言
-        - 免打扰开启时：先在知识库查找，找到就回答，找不到就说在忙
-        """
-        self._reload_settings()
-        sender_id = event.get_sender_id()
-        sender_name = event.get_sender_name() or "用户"
-        
-        # 检查用户是否在白名单中
-        if self._is_in_whitelist(sender_id):
-            return
-        
-        # 免打扰开启时
-        if self._is_dnd_time():
-            message_text = event.get_plain_text()
-            umo = event.get_group_id() or event.get_user_id()
-            
-            # 先在知识库查找
-            answer = await self._check_knowledge_base(message_text, umo)
-            
-            if answer:
-                yield event.plain_result(answer)
-                event.stop_event()
-                logger.info("私聊免打扰模式：知识库找到答案，已回复用户 %s", sender_id)
-            else:
-                # 知识库没找到，回复忙碌消息
-                busy_reply = self._generate_busy_reply()
-                yield event.plain_result(busy_reply)
-                event.stop_event()
-                logger.info("私聊免打扰模式：知识库无答案，已回复忙碌消息给用户 %s", sender_id)
-        
-        # 免打扰关闭时：不作任何发言
-
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def handle_group_message(self, event: AstrMessageEvent):
-        """处理群聊消息
-        
-        规则：
-        - 免打扰关闭时：除了自动总结，不作任何发言
-        - 免打扰开启时：
-          1. 将每条消息调度给 LLM 判断是否是发给机器人的
-          2. 如果是，先在知识库查找，找到就回答，找不到就说在忙
-        """
+        """处理私聊消息，实现免打扰模式"""
         self._reload_settings()
         
-        # 如果免打扰未开启，不作任何发言
         if not self._is_dnd_time():
             return
         
-        # 检查是否在白名单中
         sender_id = event.get_sender_id()
         if self._is_in_whitelist(sender_id):
             return
         
-        # 免打扰开启时，判断消息是否是发给机器人的
-        message_text = event.get_plain_text()
-        sender_name = event.get_sender_name() or "用户"
-        group_id = event.get_group_id()
+        sender_name = event.get_sender_name() or "对方"
+        message_text = event.get_plain_text() or ""
         
-        # 使用 LLM 判断消息是否是发给机器人的
-        is_for_bot = await self._is_message_for_bot(message_text, sender_name, group_id)
+        auto_reply = await self._generate_dnd_reply(sender_name, message_text)
         
-        if not is_for_bot:
-            # 不是发给机器人的消息，不发言
-            return
+        yield event.plain_result(auto_reply)
+        event.stop_event()
         
-        # 是发给机器人的消息，在知识库查找
-        answer = await self._check_knowledge_base(message_text, group_id)
-        
-        if answer:
-            yield event.plain_result(answer)
-            event.stop_event()
-            logger.info("群聊免打扰模式：知识库找到答案，已回复消息给 %s", sender_id)
-        else:
-            # 知识库没找到，回复忙碌消息
-            busy_reply = self._generate_busy_reply()
-            yield event.plain_result(busy_reply)
-            event.stop_event()
-            logger.info("群聊免打扰模式：知识库无答案，已回复忙碌消息给 %s", sender_id)
+        logger.info("免打扰模式：已自动回复用户 %s", sender_id)
+
+    async def _generate_dnd_reply(self, sender_name: str, message_text: str) -> str:
+        """使用 LLM 生成自然的免打扰回复"""
+        try:
+            provider = self._get_llm_provider()
+            if not provider:
+                return "抱歉，我现在有点事，稍后回复你。"
+            
+            personality_config = self.settings.get("ai_personality", {})
+            use_personality = personality_config.get("use_global_personality", False)
+            system_prompt = personality_config.get("system_prompt", "")
+            
+            contexts = []
+            if use_personality and system_prompt:
+                contexts.append({
+                    "role": "system",
+                    "content": system_prompt
+                })
+            
+            prompt = (
+                f"你正在代替教授处理私人消息。现在有一个人({sender_name})给你发了一条消息：\n"
+                f"「{message_text}」\n\n"
+                f"你需要回复这条消息，告知对方你目前正在忙，稍后会回复。\n"
+                f"请用自然、友好、简洁的语言回复，30字以内。\n"
+                f"不要使用任何格式符号（如#、*等），直接输出回复内容。"
+            )
+            
+            contexts.append({
+                "role": "user",
+                "content": prompt
+            })
+            
+            response = await provider.text_chat(contexts=contexts, max_tokens=100)
+            completion = response.completion_text.strip()
+            
+            if completion:
+                return completion
+            
+            return "抱歉，我现在有点事，稍后回复你。"
+        except Exception as exc:
+            logger.error("生成免打扰回复失败: %s", exc)
+            return "抱歉，我现在有点事，稍后回复你。"
 
     # ------------------------------------------------------------------
     # Command handlers
