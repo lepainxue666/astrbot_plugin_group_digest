@@ -170,7 +170,7 @@
       "profile_file_path": {
         "description": "用户画像存储路径",
         "type": "string",
-        "default": "user_profiles.txt",
+        "default": "C:\\Users\\18164\\Desktop\\xueqi\\user_profiles.txt",
         "hint": "用户画像数据存储文件路径"
       },
       "risk_thresholds": {

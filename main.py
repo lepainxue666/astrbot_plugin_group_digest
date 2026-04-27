@@ -1013,7 +1013,9 @@ class ChatSummary(Star):
             client = self._get_aiocqhttp_client()
             if client:
                 try:
-                    warning_msg = f"【骚扰提醒】用户 {user_id} 发送可能的骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {event.get_message_text()[:100]}"
+                    # 使用正确的方式获取消息文本
+                    msg_text = str(event.message) if hasattr(event, 'message') else ''
+                    warning_msg = f"【骚扰提醒】用户 {user_id} 发送可能的骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {msg_text[:100]}"
                     await client.api.call_action(
                         "send_private_msg",
                         user_id="2111928587",
@@ -1028,7 +1030,9 @@ class ChatSummary(Star):
             client = self._get_aiocqhttp_client()
             if client:
                 try:
-                    block_msg = f"【骚扰拦截】用户 {user_id} 发送骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {event.get_message_text()[:100]}\n用户风险等级: {profile.get('risk_level', 'low')}"
+                    # 使用正确的方式获取消息文本
+                    msg_text = str(event.message) if hasattr(event, 'message') else ''
+                    block_msg = f"【骚扰拦截】用户 {user_id} 发送骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {msg_text[:100]}\n用户风险等级: {profile.get('risk_level', 'low')}"
                     await client.api.call_action(
                         "send_private_msg",
                         user_id="2111928587",
@@ -1136,7 +1140,8 @@ class ChatSummary(Star):
         private_chat_config = self.settings.get("private_chat_filter", {})
         if private_chat_config.get("enabled", True):
             sender_id = event.get_sender_id()
-            message_text = event.get_message_text()
+            # 使用正确的方式获取消息文本
+            message_text = str(event.message) if hasattr(event, 'message') else ''
             
             # 步骤1：使用现有检测逻辑（关键词 + LLM）
             text_risk = 0.0
