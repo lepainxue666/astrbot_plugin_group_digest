@@ -150,5 +150,47 @@
         "hint": "LLM 判断为骚扰消息的概率阈值，超过此值则过滤"
       }
     }
+  },
+  "private_chat_filter": {
+    "description": "私聊过滤",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启私聊过滤",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后，会对私聊消息进行骚扰检测"
+      },
+      "user_profile_enabled": {
+        "description": "启用用户画像",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后，会为每个用户维护画像并用于风险评估"
+      },
+      "profile_file_path": {
+        "description": "用户画像存储路径",
+        "type": "string",
+        "default": "user_profiles.txt",
+        "hint": "用户画像数据存储文件路径"
+      },
+      "risk_thresholds": {
+        "description": "风险阈值",
+        "type": "object",
+        "items": {
+          "warn": {
+            "description": "提醒阈值",
+            "type": "float",
+            "default": 0.4,
+            "hint": "达到此阈值时发送提醒"
+          },
+          "block": {
+            "description": "屏蔽阈值",
+            "type": "float",
+            "default": 0.7,
+            "hint": "达到此阈值时屏蔽消息"
+          }
+        }
+      }
+    }
   }
 }

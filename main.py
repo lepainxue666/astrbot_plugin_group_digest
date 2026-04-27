@@ -900,6 +900,149 @@ class ChatSummary(Star):
         dnd_config = self.settings.get("dnd_mode", {})
         return dnd_config.get("auto_reply", "抱歉，我现在正在专心工作，稍后回复您。")
 
+    # ------------------------------------------------------------------
+    # User Profile Module
+    # ------------------------------------------------------------------
+    def _load_user_profiles(self) -> Dict[str, Dict]:
+        """加载用户画像"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if not private_chat_config.get("user_profile_enabled", True):
+            return {}
+        
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
+        if not os.path.exists(profile_file):
+            return {}
+        
+        try:
+            with open(profile_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as exc:
+            logger.error("加载用户画像失败: %s", exc)
+            return {}
+
+    def _save_user_profiles(self, profiles: Dict[str, Dict]):
+        """保存用户画像"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if not private_chat_config.get("user_profile_enabled", True):
+            return
+        
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
+        try:
+            with open(profile_file, 'w', encoding='utf-8') as f:
+                json.dump(profiles, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            logger.error("保存用户画像失败: %s", exc)
+
+    def _get_user_profile(self, user_id: str) -> Dict:
+        """获取用户画像"""
+        profiles = self._load_user_profiles()
+        return profiles.get(user_id, {
+            "user_id": user_id,
+            "total_msg": 0,
+            "spam_count": 0,
+            "risk_score": 0.0,
+            "risk_level": "low",
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+    def _calculate_risk_level(self, risk_score: float) -> str:
+        """根据风险分数计算风险等级"""
+        if risk_score >= 0.7:
+            return "high"
+        elif risk_score >= 0.4:
+            return "medium"
+        else:
+            return "low"
+
+    def _update_user_profile(self, user_id: str, msg: str, risk_score: float):
+        """更新用户画像"""
+        profiles = self._load_user_profiles()
+        profile = self._get_user_profile(user_id)
+        
+        # 更新统计数据
+        profile["total_msg"] += 1
+        if risk_score >= 0.7:
+            profile["spam_count"] += 1
+        
+        # 更新风险分数（加权平均）
+        alpha = 0.3  # 新分数的权重
+        profile["risk_score"] = profile["risk_score"] * (1 - alpha) + risk_score * alpha
+        profile["risk_level"] = self._calculate_risk_level(profile["risk_score"])
+        profile["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        profiles[user_id] = profile
+        self._save_user_profiles(profiles)
+        return profile
+
+    def _calculate_user_risk(self, profile: Dict) -> float:
+        """计算用户画像风险"""
+        # 基于历史骚扰次数计算风险
+        total_msg = profile.get("total_msg", 0)
+        spam_count = profile.get("spam_count", 0)
+        
+        if total_msg == 0:
+            return 0.0
+        
+        # 骚扰率
+        spam_ratio = spam_count / total_msg
+        # 历史风险分数
+        historical_risk = profile.get("risk_score", 0.0)
+        
+        # 综合计算用户风险
+        user_risk = (spam_ratio * 0.6) + (historical_risk * 0.4)
+        return min(max(user_risk, 0.0), 1.0)
+
+    async def _execute_disposition(self, event: AstrMessageEvent, user_id: str, risk_score: float, profile: Dict):
+        """执行处置策略"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        thresholds = private_chat_config.get("risk_thresholds", {})
+        warn_threshold = thresholds.get("warn", 0.4)
+        block_threshold = thresholds.get("block", 0.7)
+        
+        # 确定处置等级
+        if risk_score >= block_threshold:
+            disposition = "block"
+        elif risk_score >= warn_threshold:
+            disposition = "warn"
+        else:
+            disposition = "pass"
+        
+        # 执行处置
+        if disposition == "warn":
+            # 向机器人发送提醒
+            client = self._get_aiocqhttp_client()
+            if client:
+                try:
+                    warning_msg = f"【骚扰提醒】用户 {user_id} 发送可能的骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {event.get_message_text()[:100]}"
+                    await client.api.call_action(
+                        "send_private_msg",
+                        user_id="2111928587",
+                        message=warning_msg
+                    )
+                    logger.info("已发送骚扰提醒: %s", user_id)
+                except Exception as exc:
+                    logger.error("发送提醒失败: %s", exc)
+        
+        elif disposition == "block":
+            # 向机器人发送报告
+            client = self._get_aiocqhttp_client()
+            if client:
+                try:
+                    block_msg = f"【骚扰拦截】用户 {user_id} 发送骚扰消息，风险分数: {risk_score:.2f}\n消息内容: {event.get_message_text()[:100]}\n用户风险等级: {profile.get('risk_level', 'low')}"
+                    await client.api.call_action(
+                        "send_private_msg",
+                        user_id="2111928587",
+                        message=block_msg
+                    )
+                    logger.info("已拦截骚扰消息并发送报告: %s", user_id)
+                except Exception as exc:
+                    logger.error("发送报告失败: %s", exc)
+            
+            # 阻止消息
+            event.stop_event()
+        
+        return disposition
+
     def _contains_keywords(self, text: str) -> bool:
         """检查文本是否包含关键词"""
         keyword_config = self.settings.get("keyword_filter", {})
@@ -971,26 +1114,53 @@ class ChatSummary(Star):
     # ------------------------------------------------------------------
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def handle_private_message(self, event: AstrMessageEvent):
-        """处理私聊消息，实现免打扰模式"""
+        """处理私聊消息，实现免打扰模式和骚扰检测"""
         self._reload_settings()
         
         # 检查是否在免打扰时间段内
-        if not self._is_dnd_time():
-            return
+        if self._is_dnd_time():
+            # 检查用户是否在白名单中
+            sender_id = event.get_sender_id()
+            if not self._is_in_whitelist(sender_id):
+                # 获取自动回复消息
+                auto_reply = self._get_dnd_auto_reply()
+                
+                # 发送自动回复
+                yield event.plain_result(auto_reply)
+                event.stop_event()
+                
+                logger.info("免打扰模式：已自动回复用户 %s", sender_id)
+                return
         
-        # 检查用户是否在白名单中
-        sender_id = event.get_sender_id()
-        if self._is_in_whitelist(sender_id):
-            return
-        
-        # 获取自动回复消息
-        auto_reply = self._get_dnd_auto_reply()
-        
-        # 发送自动回复
-        yield event.plain_result(auto_reply)
-        event.stop_event()
-        
-        logger.info("免打扰模式：已自动回复用户 %s", sender_id)
+        # 骚扰检测
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if private_chat_config.get("enabled", True):
+            sender_id = event.get_sender_id()
+            message_text = event.get_message_text()
+            
+            # 步骤1：使用现有检测逻辑（关键词 + LLM）
+            text_risk = 0.0
+            if self._contains_keywords(message_text):
+                is_spam = await self._is_spam_message(message_text)
+                text_risk = 1.0 if is_spam else 0.0
+            
+            # 步骤2：加载用户画像
+            profile = self._get_user_profile(str(sender_id))
+            
+            # 步骤3：计算用户画像风险
+            user_risk = self._calculate_user_risk(profile)
+            
+            # 步骤4：计算最终风险
+            # 文本风险权重0.7，用户画像风险权重0.3
+            final_risk = text_risk * 0.7 + user_risk * 0.3
+            
+            # 步骤5：执行处置策略
+            disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
+            
+            # 步骤6：更新用户画像
+            self._update_user_profile(str(sender_id), message_text, final_risk)
+            
+            logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_group_message(self, event: AstrMessageEvent):
@@ -1270,8 +1440,11 @@ class ChatSummary(Star):
 
         instruction = (
             "请基于按时间窗口分段的记录进行总结，"
-            "每个分段输出关键议题、重要发言人、时间范围以及需要跟进的事项。"
-            "最后给出全局重点和 TODO，整体内容要突出重点，保持简短优美，不要使用 Markdown。"
+            "按照以下格式输出：\n"
+            "关键信息1：......（消息内容）\n"
+            "关键信息2：......（消息内容）\n"
+            "...\n"
+            "只输出关键信息，不要添加其他内容，保持简短优美，不要使用 Markdown。"
         )
 
         for group_id in target_groups:
@@ -1380,7 +1553,10 @@ class ChatSummary(Star):
 
             try:
                 normalized_group_id = self._normalize_group_id(group_id)
-                message_text = f"本群最近重要消息：\n\n{summary_text.strip()}"
+                # 获取当前时间，格式为：2026年4月20日
+                current_date = datetime.now().strftime("%Y年%m月%d日")
+                # 构建新的消息格式
+                message_text = f"{current_date}（发送总结消息的时间）\n\n{summary_text.strip()}"
                 
                 await client.api.call_action(
                     "send_group_msg",
