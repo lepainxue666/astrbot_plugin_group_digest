@@ -92,7 +92,7 @@
       "enabled": {
         "description": "开启免打扰模式",
         "type": "bool",
-        "default": true,
+        "default": false,
         "hint": "启用后，在指定时间段内自动拒绝所有消息（白名单除外）"
       },
       "start_time": {
