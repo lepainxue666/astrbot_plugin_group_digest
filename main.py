@@ -1066,7 +1066,10 @@ class ChatSummary(Star):
         
         provider = self.context.get_using_provider(umo=umo)
         if not provider:
-            return False
+            # 无法获取 provider 时，基于关键词进行简单判断
+            spam_keywords = ["刷单", "兼职", "加微信", "红包", "免费", "日赚", "招聘"]
+            text_lower = text.lower()
+            return any(keyword in text_lower for keyword in spam_keywords)
         
         prompt = (
             "请判断以下消息是否为骚扰消息。骚扰消息包括但不限于：刷单、兼职、加微信拉群、推广广告等。\n"
@@ -1087,7 +1090,10 @@ class ChatSummary(Star):
             return completion.lower() == "是"
         except Exception as exc:
             logger.error("LLM 判断骚扰消息失败: %s", exc)
-            return False
+            # LLM 调用失败时，基于关键词进行简单判断
+            spam_keywords = ["刷单", "兼职", "加微信", "红包", "免费", "日赚", "招聘"]
+            text_lower = text.lower()
+            return any(keyword in text_lower for keyword in spam_keywords)
 
     async def _filter_spam_messages(self, messages: List[dict], umo: str | None = None) -> List[dict]:
         """过滤骚扰消息"""
@@ -1147,8 +1153,17 @@ class ChatSummary(Star):
             # 步骤1：使用现有检测逻辑（关键词 + LLM）
             text_risk = 0.0
             if self._contains_keywords(message_text):
-                is_spam = await self._is_spam_message(message_text)
-                text_risk = 1.0 if is_spam else 0.0
+                try:
+                    is_spam = await self._is_spam_message(message_text, umo=None)
+                    if is_spam:
+                        text_risk = 1.0
+                    else:
+                        # 对于包含关键词的消息，给予基础风险
+                        text_risk = 0.3
+                except Exception as exc:
+                    logger.error("LLM判断失败，给予默认风险: %s", exc)
+                    # LLM调用失败时，给予中等风险
+                    text_risk = 0.5
             
             # 步骤2：加载用户画像
             profile = self._get_user_profile(str(sender_id))
