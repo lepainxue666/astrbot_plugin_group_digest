@@ -343,6 +343,52 @@ class ChatSummary(Star):
             .strip()
         )
 
+    def _parse_cq_code(self, cq_string: str) -> str:
+        """解析 CQ码 格式字符串，提取纯文本内容
+        
+        CQ码格式示例：
+        - [CQ:face,id=1]你好 → [表情]你好
+        - [CQ:image,file=xxx.jpg] → [图片]
+        - [CQ:record,file=xxx.amr] → [语音]
+        - [CQ:video,file=xxx.mp4] → [视频]
+        
+        Args:
+            cq_string: CQ码格式的字符串
+            
+        Returns:
+            提取后的纯文本内容
+        """
+        if not isinstance(cq_string, str):
+            return str(cq_string) if cq_string else ""
+        
+        # 定义 CQ码 类型到描述的映射
+        cq_type_map = {
+            "face": "[表情]",
+            "image": "[图片]",
+            "record": "[语音]",
+            "video": "[视频]",
+            "at": "[@提及]",
+            "reply": "[回复]",
+            "forward": "[合并转发]",
+            "json": "[卡片]",
+            "share": "[分享]",
+            "contact": "[联系人]",
+            "location": "[位置]",
+            "music": "[音乐]",
+        }
+        
+        # 匹配 CQ码 模式: [CQ:type,key=value,...]
+        cq_pattern = re.compile(r'\[CQ:([a-zA-Z]+)(?:,[^\]]*)?\]')
+        
+        def replace_cq_tag(match):
+            cq_type = match.group(1).lower()
+            return cq_type_map.get(cq_type, "[未知]")
+        
+        # 替换所有 CQ码 为对应的描述
+        result = cq_pattern.sub(replace_cq_tag, cq_string)
+        
+        return result.strip()
+
     async def _fetch_forward_messages(self, client, forward_id: str) -> str:
         """Expand forward (合并转发) messages into readable lines."""
         try:
@@ -1163,61 +1209,80 @@ class ChatSummary(Star):
             sender_id = event.get_sender_id()
             
             # === 1. 获取文本（关键修复点）===
-            # 使用与群聊相同的方式获取消息文本
+            # 尝试多种方式获取消息文本，优先从 raw_event 获取原始消息链
             raw_text = ""
             
-            # 方法1: 尝试 get_plain_text() 方法
-            if hasattr(event, 'get_plain_text'):
+            # 方式1：优先从 raw_event 获取原始消息链（最可靠）
+            if hasattr(event, 'raw_event') and isinstance(event.raw_event, dict):
+                raw_message_data = event.raw_event.get("message")
+                if raw_message_data:
+                    if isinstance(raw_message_data, list):
+                        # 消息链格式，使用 _flatten_message_parts 解析
+                        try:
+                            raw_text = await self._flatten_message_parts(raw_message_data)
+                            logger.info(f"[私聊检测] 使用 raw_event[message] (消息链) 获取文本: 长度={len(raw_text)}")
+                        except Exception as e:
+                            logger.warning(f"[私聊检测] _flatten_message_parts 解析消息链失败: {e}")
+                    elif isinstance(raw_message_data, str):
+                        # CQ码字符串格式，需要解析
+                        try:
+                            raw_text = self._parse_cq_code(raw_message_data)
+                            logger.info(f"[私聊检测] 使用 raw_event[message] (CQ码) 获取文本: 长度={len(raw_text)}")
+                        except Exception as e:
+                            logger.warning(f"[私聊检测] 解析 CQ码 失败: {e}")
+            
+            # 方式2：尝试 get_plain_text 方法
+            if not raw_text and hasattr(event, 'get_plain_text'):
                 try:
                     raw_text = event.get_plain_text()
-                    if raw_text:
-                        logger.debug("[文本提取] 通过 get_plain_text 获取: %s", raw_text[:50])
+                    logger.info(f"[私聊检测] 使用 get_plain_text 获取文本: 长度={len(raw_text)}")
                 except Exception as e:
-                    logger.debug("[文本提取] get_plain_text 失败: %s", e)
+                    logger.warning(f"[私聊检测] get_plain_text 调用失败: {e}")
             
-            # 方法2: 如果为空，尝试 raw_event
-            if not raw_text and hasattr(event, 'raw_event') and isinstance(event.raw_event, dict):
-                raw_msg = event.raw_event.get('message', '')
-                if isinstance(raw_msg, list):
-                    client = self._get_aiocqhttp_client()
-                    raw_text = await self._flatten_message_parts(raw_msg, client)
-                elif isinstance(raw_msg, str):
-                    raw_text = raw_msg
-                logger.debug("[文本提取] 通过 raw_event 获取: %s", raw_text[:50] if raw_text else '空')
-            
-            # 方法3: 尝试 message 属性
+            # 方式3：尝试 event.message 属性
             if not raw_text and hasattr(event, 'message'):
-                msg_content = event.message
-                if isinstance(msg_content, list):
-                    client = self._get_aiocqhttp_client()
-                    raw_text = await self._flatten_message_parts(msg_content, client)
-                elif isinstance(msg_content, str):
-                    raw_text = msg_content
-                else:
-                    # 尝试转换为字符串
+                message = event.message
+                if isinstance(message, list):
+                    # 消息链格式
                     try:
-                        raw_text = str(msg_content)
-                    except Exception:
-                        pass
-                logger.debug("[文本提取] 通过 message 属性获取: %s", raw_text[:50] if raw_text else '空')
+                        raw_text = await self._flatten_message_parts(message)
+                        logger.info(f"[私聊检测] 使用 event.message (消息链) 获取文本: 长度={len(raw_text)}")
+                    except Exception as e:
+                        logger.warning(f"[私聊检测] _flatten_message_parts 解析 event.message 失败: {e}")
+                elif isinstance(message, str):
+                    # CQ码字符串格式
+                    try:
+                        raw_text = self._parse_cq_code(message)
+                        logger.info(f"[私聊检测] 使用 event.message (CQ码) 获取文本: 长度={len(raw_text)}")
+                    except Exception as e:
+                        logger.warning(f"[私聊检测] 解析 event.message CQ码 失败: {e}")
+                elif hasattr(message, 'text'):
+                    raw_text = message.text
+                    logger.info(f"[私聊检测] 使用 message.text 获取文本: 长度={len(raw_text)}")
+                else:
+                    try:
+                        raw_text = str(message)
+                        logger.info(f"[私聊检测] 使用 str(message) 获取文本: 长度={len(raw_text)}")
+                    except Exception as e:
+                        logger.warning(f"[私聊检测] str(message) 失败: {e}")
             
-            # 方法4: 尝试其他可能的属性
-            if not raw_text:
-                for attr_name in ['message_text', 'content', 'text']:
-                    if hasattr(event, attr_name):
-                        try:
-                            attr_val = getattr(event, attr_name)
-                            if attr_val and isinstance(attr_val, str):
-                                raw_text = attr_val
-                                logger.debug("[文本提取] 通过 %s 获取: %s", attr_name, raw_text[:50])
-                                break
-                        except Exception:
-                            pass
+            # 方式4：尝试 raw_message 属性（CQ码格式）
+            if not raw_text and hasattr(event, 'raw_message') and isinstance(event.raw_message, str):
+                try:
+                    raw_text = self._parse_cq_code(event.raw_message)
+                    logger.info(f"[私聊检测] 使用 raw_message (CQ码) 获取文本: 长度={len(raw_text)}")
+                except Exception as e:
+                    logger.warning(f"[私聊检测] 解析 raw_message CQ码 失败: {e}")
             
             text = raw_text.strip()
             
+            # 如果所有方式都失败，记录 raw_event 结构用于调试
+            if not text:
+                raw_event_info = str(event.raw_event)[:500] if hasattr(event, 'raw_event') else "N/A"
+                logger.error(f"[私聊检测] 所有提取方式均失败！raw_event 结构: {raw_event_info}")
+            
             logger.info(f"[私聊检测] 用户: {sender_id}")
-            logger.info(f"[私聊检测] 消息文本: {text}")
+            logger.info(f"[私聊检测] 最终消息文本: '{text}'")
             
             # 防止空文本
             if not text:
