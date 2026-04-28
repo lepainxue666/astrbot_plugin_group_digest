@@ -1163,7 +1163,10 @@ class ChatSummary(Star):
             sender_id = event.get_sender_id()
             
             # === 1. 获取文本（关键修复点）===
-            raw_text = str(event.message) if hasattr(event, 'message') else ''
+            # 使用官方接口获取纯文本内容
+            raw_text = event.get_plain_text() if hasattr(event, 'get_plain_text') else ''
+            if not raw_text and hasattr(event, 'message'):
+                raw_text = str(event.message)
             text = raw_text.strip()
             
             logger.info(f"[私聊检测] 用户: {sender_id}")
