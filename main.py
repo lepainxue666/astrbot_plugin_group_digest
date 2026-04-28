@@ -957,31 +957,36 @@ class ChatSummary(Star):
 
     def _update_user_profile(self, user_id: str, msg: str, risk_score: float):
         """更新用户画像"""
-        logger.info("开始更新用户画像: %s, 风险分数: %.2f", user_id, risk_score)
         profiles = self._load_user_profiles()
-        logger.info("加载用户画像数量: %d", len(profiles))
-        
         profile = self._get_user_profile(user_id)
-        logger.info("当前用户画像: %s", profile)
         
         # 更新统计数据
         profile["total_msg"] += 1
-        if risk_score >= 0.7:
+        
+        # 更新骚扰计数
+        if risk_score >= 0.6:
             profile["spam_count"] += 1
-            logger.info("用户 %s 被标记为骚扰，当前骚扰次数: %d", user_id, profile["spam_count"])
+            logger.info(f"[画像更新] spam_count+1, 当前: {profile['spam_count']}")
         
-        # 更新风险分数（加权平均）
-        alpha = 0.3  # 新分数的权重
-        old_score = profile["risk_score"]
-        profile["risk_score"] = profile["risk_score"] * (1 - alpha) + risk_score * alpha
-        profile["risk_level"] = self._calculate_risk_level(profile["risk_score"])
+        # 更新风险分数（滑动平均）
+        profile["risk_score"] = round(
+            (profile["risk_score"] * 0.8 + risk_score * 0.2), 3
+        )
+        
+        # 更新风险等级
+        if profile["risk_score"] > 0.7:
+            profile["risk_level"] = "high"
+        elif profile["risk_score"] > 0.4:
+            profile["risk_level"] = "medium"
+        else:
+            profile["risk_level"] = "low"
+        
         profile["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        logger.info("用户 %s 风险分数更新: %.2f -> %.2f, 风险等级: %s", user_id, old_score, profile["risk_score"], profile["risk_level"])
         
         profiles[user_id] = profile
         self._save_user_profiles(profiles)
-        logger.info("用户画像保存成功")
+        
+        logger.info(f"[画像更新] {profile}")
         return profile
 
     def _calculate_user_risk(self, profile: Dict) -> float:
@@ -1065,26 +1070,20 @@ class ChatSummary(Star):
         
         keywords = keyword_config.get("keywords", ["刷单", "加微信"])
         text_lower = text.lower()
-        result = any(keyword.lower() in text_lower for keyword in keywords)
-        logger.info("关键词检查结果: %s, 关键词列表: %s", result, keywords)
-        return result
+        return any(keyword.lower() in text_lower for keyword in keywords)
 
     async def _is_spam_message(self, text: str, umo: str | None = None) -> bool:
         """使用 LLM 判断消息是否为骚扰消息"""
         keyword_config = self.settings.get("keyword_filter", {})
         if not keyword_config.get("enabled", True):
-            logger.info("关键词过滤未启用")
             return False
         
         provider = self.context.get_using_provider(umo=umo)
         if not provider:
             # 无法获取 provider 时，基于关键词进行简单判断
-            logger.info("无法获取 LLM provider，使用关键词判断")
             spam_keywords = ["刷单", "兼职", "加微信", "红包", "免费", "日赚", "招聘"]
             text_lower = text.lower()
-            result = any(keyword in text_lower for keyword in spam_keywords)
-            logger.info("关键词判断结果: %s, 关键词列表: %s", result, spam_keywords)
-            return result
+            return any(keyword in text_lower for keyword in spam_keywords)
         
         prompt = (
             "请判断以下消息是否为骚扰消息。骚扰消息包括但不限于：刷单、兼职、加微信拉群、推广广告等。\n"
@@ -1100,20 +1099,15 @@ class ChatSummary(Star):
         ]
         
         try:
-            logger.info("开始 LLM 判断骚扰消息")
             response = await provider.text_chat(contexts=contexts, max_tokens=10)
             completion = response.completion_text.strip()
-            result = completion.lower() == "是"
-            logger.info("LLM 判断结果: %s, 回复内容: %s", result, completion)
-            return result
+            return completion.lower() == "是"
         except Exception as exc:
             logger.error("LLM 判断骚扰消息失败: %s", exc)
             # LLM 调用失败时，基于关键词进行简单判断
             spam_keywords = ["刷单", "兼职", "加微信", "红包", "免费", "日赚", "招聘"]
             text_lower = text.lower()
-            result = any(keyword in text_lower for keyword in spam_keywords)
-            logger.info("LLM 失败后关键词判断结果: %s, 关键词列表: %s", result, spam_keywords)
-            return result
+            return any(keyword in text_lower for keyword in spam_keywords)
 
     async def _filter_spam_messages(self, messages: List[dict], umo: str | None = None) -> List[dict]:
         """过滤骚扰消息"""
@@ -1148,66 +1142,10 @@ class ChatSummary(Star):
         """处理私聊消息，实现免打扰模式和骚扰检测"""
         self._reload_settings()
         
-        sender_id = event.get_sender_id()
-        # 使用正确的方式获取消息文本
-        message_text = str(event.message) if hasattr(event, 'message') else ''
-        
-        # 先进行骚扰检测
-        private_chat_config = self.settings.get("private_chat_filter", {})
-        if private_chat_config.get("enabled", True):
-            # 输出调试信息
-            logger.info("消息文本: %s", message_text)
-            logger.info("消息长度: %d", len(message_text))
-            
-            # 步骤1：使用现有检测逻辑（关键词 + LLM）
-            text_risk = 0.0
-            
-            # 检查关键词过滤配置
-            keyword_config = self.settings.get("keyword_filter", {})
-            logger.info("关键词过滤启用: %s", keyword_config.get("enabled", True))
-            logger.info("关键词列表: %s", keyword_config.get("keywords", []))
-            
-            # 检查是否包含关键词
-            contains_keywords = self._contains_keywords(message_text)
-            logger.info("包含关键词: %s", contains_keywords)
-            
-            if contains_keywords:
-                try:
-                    is_spam = await self._is_spam_message(message_text, umo=None)
-                    logger.info("LLM判断结果: %s", is_spam)
-                    if is_spam:
-                        text_risk = 1.0
-                    else:
-                        # 对于包含关键词的消息，给予基础风险
-                        text_risk = 0.3
-                except Exception as exc:
-                    logger.error("LLM判断失败，给予默认风险: %s", exc)
-                    # LLM调用失败时，给予中等风险
-                    text_risk = 0.5
-            
-            logger.info("文本风险分数: %.2f", text_risk)
-            
-            # 步骤2：加载用户画像
-            profile = self._get_user_profile(str(sender_id))
-            
-            # 步骤3：计算用户画像风险
-            user_risk = self._calculate_user_risk(profile)
-            
-            # 步骤4：计算最终风险
-            # 文本风险权重0.7，用户画像风险权重0.3
-            final_risk = text_risk * 0.7 + user_risk * 0.3
-            
-            # 步骤5：执行处置策略
-            disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
-            
-            # 步骤6：更新用户画像
-            self._update_user_profile(str(sender_id), message_text, final_risk)
-            
-            logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
-        
-        # 然后检查免打扰模式
+        # 检查是否在免打扰时间段内
         if self._is_dnd_time():
             # 检查用户是否在白名单中
+            sender_id = event.get_sender_id()
             if not self._is_in_whitelist(sender_id):
                 # 获取自动回复消息
                 auto_reply = self._get_dnd_auto_reply()
@@ -1217,6 +1155,82 @@ class ChatSummary(Star):
                 event.stop_event()
                 
                 logger.info("免打扰模式：已自动回复用户 %s", sender_id)
+                return
+        
+        # 骚扰检测
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if private_chat_config.get("enabled", True):
+            sender_id = event.get_sender_id()
+            
+            # === 1. 获取文本（关键修复点）===
+            raw_text = str(event.message) if hasattr(event, 'message') else ''
+            text = raw_text.strip()
+            
+            logger.info(f"[私聊检测] 用户: {sender_id}")
+            logger.info(f"[私聊检测] 消息文本: {text}")
+            
+            # 防止空文本
+            if not text:
+                logger.info("[私聊检测] 文本为空，跳过")
+                return
+            
+            # === 2. 关键词检测 ===
+            keywords = ["刷单", "加微信", "兼职", "pdd", "开通", "贷款", "赚钱", "日入"]
+            hit_keywords = [k for k in keywords if k in text]
+            
+            keyword_score = 0.0
+            if hit_keywords:
+                keyword_score = 0.6
+                logger.info(f"[关键词命中] {hit_keywords}")
+            else:
+                logger.info("[关键词命中] 无")
+            
+            # === 3. LLM检测 ===
+            llm_score = 0.0
+            if keyword_score > 0:
+                try:
+                    is_spam = await self._is_spam_message(text, umo=None)
+                    llm_score = 1.0 if is_spam else 0.3
+                    logger.info(f"[LLM评分] {llm_score:.2f}")
+                except Exception as e:
+                    logger.warning(f"[LLM异常] {e}")
+                    llm_score = 0.5
+            
+            # === 4. 基础风险 ===
+            base_score = max(keyword_score, llm_score)
+            
+            # === 5. 冷启动修复（关键）===
+            if base_score == 0:
+                base_score = 0.1  # 防止永远为0
+                logger.info("[冷启动] 基础风险设为0.1")
+            
+            # === 6. 用户画像 ===
+            profile = self._get_user_profile(str(sender_id))
+            logger.info(f"[画像] {profile}")
+            
+            profile_boost = 0.0
+            spam_count = profile.get("spam_count", 0)
+            risk_score = profile.get("risk_score", 0.0)
+            
+            if spam_count > 3:
+                profile_boost += 0.2
+                logger.info("[画像加权] spam_count>3 +0.2")
+            
+            if risk_score > 0.3:
+                profile_boost += 0.2
+                logger.info("[画像加权] risk_score>0.3 +0.2")
+            
+            # === 7. 最终风险 ===
+            final_risk = min(base_score + profile_boost, 1.0)
+            logger.info(f"[风险计算] base={base_score:.2f}, profile={profile_boost:.2f}, final={final_risk:.2f}")
+            
+            # 步骤5：执行处置策略
+            disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
+            
+            # 步骤6：更新用户画像
+            self._update_user_profile(str(sender_id), message_text, final_risk)
+            
+            logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_group_message(self, event: AstrMessageEvent):
