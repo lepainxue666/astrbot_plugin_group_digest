@@ -343,52 +343,6 @@ class ChatSummary(Star):
             .strip()
         )
 
-    def _parse_cq_code(self, cq_string: str) -> str:
-        """解析 CQ码 格式字符串，提取纯文本内容
-        
-        CQ码格式示例：
-        - [CQ:face,id=1]你好 → [表情]你好
-        - [CQ:image,file=xxx.jpg] → [图片]
-        - [CQ:record,file=xxx.amr] → [语音]
-        - [CQ:video,file=xxx.mp4] → [视频]
-        
-        Args:
-            cq_string: CQ码格式的字符串
-            
-        Returns:
-            提取后的纯文本内容
-        """
-        if not isinstance(cq_string, str):
-            return str(cq_string) if cq_string else ""
-        
-        # 定义 CQ码 类型到描述的映射
-        cq_type_map = {
-            "face": "[表情]",
-            "image": "[图片]",
-            "record": "[语音]",
-            "video": "[视频]",
-            "at": "[@提及]",
-            "reply": "[回复]",
-            "forward": "[合并转发]",
-            "json": "[卡片]",
-            "share": "[分享]",
-            "contact": "[联系人]",
-            "location": "[位置]",
-            "music": "[音乐]",
-        }
-        
-        # 匹配 CQ码 模式: [CQ:type,key=value,...]
-        cq_pattern = re.compile(r'\[CQ:([a-zA-Z]+)(?:,[^\]]*)?\]')
-        
-        def replace_cq_tag(match):
-            cq_type = match.group(1).lower()
-            return cq_type_map.get(cq_type, "[未知]")
-        
-        # 替换所有 CQ码 为对应的描述
-        result = cq_pattern.sub(replace_cq_tag, cq_string)
-        
-        return result.strip()
-
     async def _fetch_forward_messages(self, client, forward_id: str) -> str:
         """Expand forward (合并转发) messages into readable lines."""
         try:
@@ -1209,171 +1163,16 @@ class ChatSummary(Star):
             sender_id = event.get_sender_id()
             
             # === 1. 获取文本（关键修复点）===
-            # 尝试多种方式获取消息文本
-            raw_text = ""
-            
-            # 记录事件对象的所有属性，使用 INFO 级别确保日志被记录
-            event_attrs = [attr for attr in dir(event) if not attr.startswith('_')]
-            logger.info(f"[私聊检测] 事件对象属性列表: {event_attrs}")
-            
-            # 检查事件对象的 __dict__ 以了解内部结构
-            if hasattr(event, '__dict__'):
-                dict_keys = list(event.__dict__.keys())
-                logger.info(f"[私聊检测] 事件对象 __dict__ 键: {dict_keys}")
-                # 检查是否有任何看起来像消息的属性
-                for key in dict_keys:
-                    if 'msg' in key.lower() or 'text' in key.lower() or 'content' in key.lower():
-                        value = event.__dict__.get(key)
-                        logger.info(f"[私聊检测] 可疑属性 {key}: 类型={type(value).__name__ if value else 'None'}")
-                        if isinstance(value, str):
-                            logger.info(f"[私聊检测] 可疑属性 {key} 值: {value[:100]}...")
-            
-            # 方式1：参考 _extract_forward_ids_from_event 的实现
-            # 尝试从多个可能的来源获取消息数据
-            candidates = []
-            
-            # 1.1 尝试 raw_event 属性（字典格式）
-            raw_event = getattr(event, "raw_event", None)
-            logger.info(f"[私聊检测] raw_event 类型: {type(raw_event).__name__ if raw_event else 'None'}")
-            if isinstance(raw_event, dict):
-                candidates.append(raw_event.get("message"))
-                candidates.append(raw_event.get("original_message"))
-                logger.info(f"[私聊检测] 从 raw_event 获取 candidates")
-            
-            # 1.2 尝试 message 属性（列表格式）
-            message_attr = getattr(event, "message", None)
-            logger.info(f"[私聊检测] message 属性类型: {type(message_attr).__name__ if message_attr else 'None'}")
-            if isinstance(message_attr, list):
-                candidates.append(message_attr)
-                logger.info(f"[私聊检测] 从 message 属性获取 candidates")
-            elif message_attr is not None:
-                # 非列表格式也加入候选
-                candidates.append(message_attr)
-                logger.info(f"[私聊检测] message 属性非列表，加入候选")
-            
-            # 1.3 尝试获取底层 aiocqhttp 事件对象
-            ai_event = None
-            try:
-                ai_event = self._ensure_aiocqhttp_event(event)
-                logger.info(f"[私聊检测] 成功获取 AiocqhttpMessageEvent")
-                
-                # 记录 ai_event 的属性
-                ai_event_attrs = [attr for attr in dir(ai_event) if not attr.startswith('_')]
-                logger.info(f"[私聊检测] AiocqhttpMessageEvent 属性列表: {ai_event_attrs}")
-                
-                # 从 aiocqhttp 事件获取更多候选
-                if hasattr(ai_event, '_event'):
-                    inner_event = ai_event._event
-                    logger.info(f"[私聊检测] _event 类型: {type(inner_event).__name__ if inner_event else 'None'}")
-                    if isinstance(inner_event, dict):
-                        candidates.append(inner_event.get("message"))
-                        candidates.append(inner_event.get("original_message"))
-                        logger.info(f"[私聊检测] 从 _event 获取 candidates")
-                
-                # 尝试 ai_event 的 raw_message 属性
-                if hasattr(ai_event, 'raw_message'):
-                    logger.info(f"[私聊检测] ai_event.raw_message 类型: {type(ai_event.raw_message).__name__}")
-                    candidates.append(ai_event.raw_message)
-                    logger.info(f"[私聊检测] 从 ai_event.raw_message 获取 candidate")
-                
-                # 尝试 ai_event 的 message 属性
-                if hasattr(ai_event, 'message'):
-                    ai_msg = ai_event.message
-                    logger.info(f"[私聊检测] ai_event.message 类型: {type(ai_msg).__name__}")
-                    candidates.append(ai_msg)
-                    logger.info(f"[私聊检测] 从 ai_event.message 获取 candidate")
-            
-            except TypeError as e:
-                logger.info(f"[私聊检测] 不是 AiocqhttpMessageEvent: {e}")
-            
-            # 记录所有候选
-            logger.info(f"[私聊检测] 候选数量: {len(candidates)}")
-            for idx, candidate in enumerate(candidates):
-                if candidate is not None:
-                    logger.info(f"[私聊检测] 候选[{idx}] 类型: {type(candidate).__name__}")
-                    # 记录候选的前100个字符（如果是字符串）
-                    if isinstance(candidate, str):
-                        logger.info(f"[私聊检测] 候选[{idx}] 值: {candidate[:100]}...")
-                    elif isinstance(candidate, list):
-                        logger.info(f"[私聊检测] 候选[{idx}] 列表长度: {len(candidate)}")
-            
-            # 遍历所有候选，尝试解析
-            for idx, candidate in enumerate(candidates):
-                if raw_text:
-                    break
-                if candidate is None:
-                    continue
-                
-                try:
-                    if isinstance(candidate, list):
-                        # 消息链格式
-                        raw_text = await self._flatten_message_parts(candidate)
-                        logger.info(f"[私聊检测] 使用候选[{idx}] (消息链) 获取文本: 长度={len(raw_text)}")
-                    elif isinstance(candidate, str):
-                        # CQ码字符串格式
-                        raw_text = self._parse_cq_code(candidate)
-                        logger.info(f"[私聊检测] 使用候选[{idx}] (CQ码) 获取文本: 长度={len(raw_text)}")
-                    else:
-                        # 其他类型，尝试转换为字符串
-                        raw_text = str(candidate)
-                        logger.info(f"[私聊检测] 使用候选[{idx}] (str) 获取文本: 长度={len(raw_text)}")
-                except Exception as e:
-                    logger.info(f"[私聊检测] 解析候选[{idx}]失败: {e}")
-            
-            # 方式2：尝试 get_plain_text 方法
-            if not raw_text and hasattr(event, 'get_plain_text'):
-                try:
-                    raw_text = event.get_plain_text()
-                    logger.info(f"[私聊检测] 使用 get_plain_text 获取文本: 长度={len(raw_text)}")
-                except Exception as e:
-                    logger.warning(f"[私聊检测] get_plain_text 调用失败: {e}")
-            
-            # 方式3：尝试其他可能的属性
+            # 使用官方接口获取纯文本内容（参考Amain.py的实现）
+            raw_text = getattr(event, 'message_str', '')
             if not raw_text:
-                # 尝试 content 属性
-                if hasattr(event, 'content'):
-                    try:
-                        raw_text = str(event.content)
-                        logger.info(f"[私聊检测] 使用 content 获取文本: 长度={len(raw_text)}")
-                    except Exception as e:
-                        logger.info(f"[私聊检测] 获取 content 失败: {e}")
-                
-                # 尝试 _message 私有属性
-                if not raw_text and hasattr(event, '_message'):
-                    try:
-                        msg_obj = event._message
-                        logger.info(f"[私聊检测] _message 类型: {type(msg_obj).__name__}")
-                        if isinstance(msg_obj, list):
-                            raw_text = await self._flatten_message_parts(msg_obj)
-                        elif isinstance(msg_obj, str):
-                            raw_text = self._parse_cq_code(msg_obj)
-                        else:
-                            raw_text = str(msg_obj)
-                        logger.info(f"[私聊检测] 使用 _message 获取文本: 长度={len(raw_text)}")
-                    except Exception as e:
-                        logger.info(f"[私聊检测] 获取 _message 失败: {e}")
-            
+                raw_text = event.get_plain_text() if hasattr(event, 'get_plain_text') else ''
+            if not raw_text and hasattr(event, 'message'):
+                raw_text = str(event.message)
             text = raw_text.strip()
             
-            # 如果所有方式都失败，记录事件结构用于调试
-            if not text:
-                event_info = []
-                if hasattr(event, '__dict__'):
-                    event_info.append(f"__dict__ keys: {list(event.__dict__.keys())[:20]}")
-                if hasattr(event, '__class__'):
-                    event_info.append(f"class: {event.__class__.__name__}")
-                if ai_event is not None:
-                    if hasattr(ai_event, '__dict__'):
-                        event_info.append(f"ai_event.__dict__ keys: {list(ai_event.__dict__.keys())[:20]}")
-                    event_info.append(f"ai_event type: {type(ai_event)}")
-                # 记录所有候选的类型和值
-                for idx, candidate in enumerate(candidates):
-                    if candidate is not None:
-                        event_info.append(f"candidate[{idx}] type={type(candidate).__name__}")
-                logger.error(f"[私聊检测] 所有提取方式均失败！事件信息: {'; '.join(event_info)}")
-            
             logger.info(f"[私聊检测] 用户: {sender_id}")
-            logger.info(f"[私聊检测] 最终消息文本: '{text}'")
+            logger.info(f"[私聊检测] 消息文本: {text}")
             
             # 防止空文本
             if not text:
@@ -1434,7 +1233,7 @@ class ChatSummary(Star):
             disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
             
             # 步骤6：更新用户画像
-            self._update_user_profile(str(sender_id), text, final_risk)
+            self._update_user_profile(str(sender_id), message_text, final_risk)
             
             logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
 
