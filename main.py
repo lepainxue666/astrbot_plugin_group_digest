@@ -1166,18 +1166,53 @@ class ChatSummary(Star):
             # 使用与群聊相同的方式获取消息文本
             raw_text = ""
             
-            # 尝试多种方式获取消息文本
+            # 方法1: 尝试 get_plain_text() 方法
             if hasattr(event, 'get_plain_text'):
-                raw_text = event.get_plain_text()
-            elif hasattr(event, 'message'):
+                try:
+                    raw_text = event.get_plain_text()
+                    if raw_text:
+                        logger.debug("[文本提取] 通过 get_plain_text 获取: %s", raw_text[:50])
+                except Exception as e:
+                    logger.debug("[文本提取] get_plain_text 失败: %s", e)
+            
+            # 方法2: 如果为空，尝试 raw_event
+            if not raw_text and hasattr(event, 'raw_event') and isinstance(event.raw_event, dict):
+                raw_msg = event.raw_event.get('message', '')
+                if isinstance(raw_msg, list):
+                    client = self._get_aiocqhttp_client()
+                    raw_text = await self._flatten_message_parts(raw_msg, client)
+                elif isinstance(raw_msg, str):
+                    raw_text = raw_msg
+                logger.debug("[文本提取] 通过 raw_event 获取: %s", raw_text[:50] if raw_text else '空')
+            
+            # 方法3: 尝试 message 属性
+            if not raw_text and hasattr(event, 'message'):
                 msg_content = event.message
-                # 如果消息是列表格式（CQHTTP格式），使用解析方法
                 if isinstance(msg_content, list):
                     client = self._get_aiocqhttp_client()
                     raw_text = await self._flatten_message_parts(msg_content, client)
+                elif isinstance(msg_content, str):
+                    raw_text = msg_content
                 else:
-                    # 如果是字符串，直接使用
-                    raw_text = str(msg_content)
+                    # 尝试转换为字符串
+                    try:
+                        raw_text = str(msg_content)
+                    except Exception:
+                        pass
+                logger.debug("[文本提取] 通过 message 属性获取: %s", raw_text[:50] if raw_text else '空')
+            
+            # 方法4: 尝试其他可能的属性
+            if not raw_text:
+                for attr_name in ['message_text', 'content', 'text']:
+                    if hasattr(event, attr_name):
+                        try:
+                            attr_val = getattr(event, attr_name)
+                            if attr_val and isinstance(attr_val, str):
+                                raw_text = attr_val
+                                logger.debug("[文本提取] 通过 %s 获取: %s", attr_name, raw_text[:50])
+                                break
+                        except Exception:
+                            pass
             
             text = raw_text.strip()
             
@@ -1243,7 +1278,7 @@ class ChatSummary(Star):
             disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
             
             # 步骤6：更新用户画像
-            self._update_user_profile(str(sender_id), message_text, final_risk)
+            self._update_user_profile(str(sender_id), text, final_risk)
             
             logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
 
