@@ -958,10 +958,23 @@ class ChatSummary(Star):
     def _update_user_profile(self, user_id: str, msg: str, risk_score: float):
         """更新用户画像"""
         profiles = self._load_user_profiles()
-        profile = self._get_user_profile(user_id)
+        
+        # 直接从profiles中获取或创建profile，确保是同一个字典引用
+        if user_id not in profiles:
+            profiles[user_id] = {
+                "user_id": user_id,
+                "total_msg": 0,
+                "spam_count": 0,
+                "risk_score": 0.0,
+                "risk_level": "low",
+                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        
+        profile = profiles[user_id]
         
         # 更新统计数据
         profile["total_msg"] += 1
+        logger.info(f"[画像更新] total_msg+1, 当前: {profile['total_msg']}")
         
         # 更新骚扰计数
         if risk_score >= 0.6:
@@ -972,6 +985,7 @@ class ChatSummary(Star):
         profile["risk_score"] = round(
             (profile["risk_score"] * 0.8 + risk_score * 0.2), 3
         )
+        logger.info(f"[画像更新] risk_score 更新为: {profile['risk_score']}")
         
         # 更新风险等级
         if profile["risk_score"] > 0.7:
@@ -983,7 +997,6 @@ class ChatSummary(Star):
         
         profile["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        profiles[user_id] = profile
         self._save_user_profiles(profiles)
         
         logger.info(f"[画像更新] {profile}")
@@ -1164,12 +1177,35 @@ class ChatSummary(Star):
             
             # === 1. 获取文本（关键修复点）===
             # 使用官方接口获取纯文本内容（参考Amain.py的实现）
-            raw_text = getattr(event, 'message_str', '')
-            if not raw_text:
-                raw_text = event.get_plain_text() if hasattr(event, 'get_plain_text') else ''
-            if not raw_text and hasattr(event, 'message'):
-                raw_text = str(event.message)
-            text = raw_text.strip()
+            text = ""
+            
+            # 方法1：优先使用 get_plain_text（官方推荐方式）
+            if hasattr(event, 'get_plain_text'):
+                text = event.get_plain_text().strip()
+                logger.info(f"[私聊检测] 使用 get_plain_text(): {text}")
+            
+            # 方法2：使用 message_str（Amain.py使用的方式）
+            if not text and hasattr(event, 'message_str'):
+                text = str(event.message_str).strip()
+                logger.info(f"[私聊检测] 使用 message_str: {text}")
+            
+            # 方法3：尝试获取消息链中的纯文本
+            if not text and hasattr(event, 'message'):
+                msg = event.message
+                if hasattr(msg, 'get_text'):
+                    text = msg.get_text().strip()
+                    logger.info(f"[私聊检测] 使用 message.get_text(): {text}")
+                elif hasattr(msg, 'extract_plain_text'):
+                    text = msg.extract_plain_text().strip()
+                    logger.info(f"[私聊检测] 使用 message.extract_plain_text(): {text}")
+                else:
+                    text = str(msg).strip()
+                    logger.info(f"[私聊检测] 使用 str(message): {text}")
+            
+            # 方法4：尝试获取 event 的 dict 中的 text 字段（CQHTTP 协议格式）
+            if not text and isinstance(event, dict) and 'text' in event:
+                text = str(event['text']).strip()
+                logger.info(f"[私聊检测] 使用 event['text']: {text}")
             
             logger.info(f"[私聊检测] 用户: {sender_id}")
             logger.info(f"[私聊检测] 消息文本: {text}")
@@ -1233,7 +1269,7 @@ class ChatSummary(Star):
             disposition = await self._execute_disposition(event, str(sender_id), final_risk, profile)
             
             # 步骤6：更新用户画像
-            self._update_user_profile(str(sender_id), message_text, final_risk)
+            self._update_user_profile(str(sender_id), text, final_risk)
             
             logger.info("私聊骚扰检测：用户 %s，风险分数: %.2f，处置: %s", sender_id, final_risk, disposition)
 
