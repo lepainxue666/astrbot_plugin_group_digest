@@ -1163,10 +1163,22 @@ class ChatSummary(Star):
             sender_id = event.get_sender_id()
             
             # === 1. 获取文本（关键修复点）===
-            # 使用官方接口获取纯文本内容
-            raw_text = event.get_plain_text() if hasattr(event, 'get_plain_text') else ''
-            if not raw_text and hasattr(event, 'message'):
-                raw_text = str(event.message)
+            # 使用与群聊相同的方式获取消息文本
+            raw_text = ""
+            
+            # 尝试多种方式获取消息文本
+            if hasattr(event, 'get_plain_text'):
+                raw_text = event.get_plain_text()
+            elif hasattr(event, 'message'):
+                msg_content = event.message
+                # 如果消息是列表格式（CQHTTP格式），使用解析方法
+                if isinstance(msg_content, list):
+                    client = self._get_aiocqhttp_client()
+                    raw_text = await self._flatten_message_parts(msg_content, client)
+                else:
+                    # 如果是字符串，直接使用
+                    raw_text = str(msg_content)
+            
             text = raw_text.strip()
             
             logger.info(f"[私聊检测] 用户: {sender_id}")
