@@ -180,13 +180,13 @@
           "warn": {
             "description": "提醒阈值",
             "type": "float",
-            "default": 0.4,
+            "default": 0.6,
             "hint": "达到此阈值时发送提醒"
           },
           "block": {
             "description": "屏蔽阈值",
             "type": "float",
-            "default": 0.7,
+            "default": 0.8,
             "hint": "达到此阈值时屏蔽消息"
           }
         }

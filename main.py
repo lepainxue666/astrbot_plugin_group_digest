@@ -1221,7 +1221,7 @@ class ChatSummary(Star):
             
             keyword_score = 0.0
             if hit_keywords:
-                keyword_score = 0.6
+                keyword_score = 0.2
                 logger.info(f"[关键词命中] {hit_keywords}")
             else:
                 logger.info("[关键词命中] 无")
@@ -1231,7 +1231,7 @@ class ChatSummary(Star):
             if keyword_score > 0:
                 try:
                     is_spam = await self._is_spam_message(text, umo=None)
-                    llm_score = 1.0 if is_spam else 0.3
+                    llm_score = 0.5 if is_spam else 0
                     logger.info(f"[LLM评分] {llm_score:.2f}")
                 except Exception as e:
                     logger.warning(f"[LLM异常] {e}")
@@ -1254,12 +1254,12 @@ class ChatSummary(Star):
             risk_score = profile.get("risk_score", 0.0)
             
             if spam_count > 3:
-                profile_boost += 0.2
-                logger.info("[画像加权] spam_count>3 +0.2")
+                profile_boost += 0.1
+                logger.info("[画像加权] spam_count>3 +0.1")
             
             if risk_score > 0.3:
-                profile_boost += 0.2
-                logger.info("[画像加权] risk_score>0.3 +0.2")
+                profile_boost += 0.1
+                logger.info("[画像加权] risk_score>0.3 +0.1")
             
             # === 7. 最终风险 ===
             final_risk = min(base_score + profile_boost, 1.0)
