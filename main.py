@@ -933,12 +933,24 @@ class ChatSummary(Star):
         
         profile_file = private_chat_config.get("profile_file_path", "user_profiles.xlsx")
         try:
+            if not profiles:
+                logger.warning("用户画像为空，跳过保存")
+                return
+            
             df = pd.DataFrame.from_dict(profiles, orient='index')
             df.index.name = 'user_id'
+            
+            # 确保列顺序正确
+            columns = ['total_msg', 'spam_count', 'risk_score', 'risk_level', 'last_update']
+            for col in columns:
+                if col not in df.columns:
+                    df[col] = ''
+            
+            df = df[columns]
             df.to_excel(profile_file, index=True, engine='openpyxl')
-            logger.info(f"用户画像已保存到 Excel，共 {len(profiles)} 条记录")
+            logger.info(f"用户画像已保存到 Excel，共 {len(profiles)} 条记录，路径: {profile_file}")
         except Exception as exc:
-            logger.error("保存用户画像失败: %s", exc)
+            logger.error(f"保存用户画像失败: {exc}，路径: {profile_file}")
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
