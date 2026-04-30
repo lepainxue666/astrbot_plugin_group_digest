@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-import pymssql
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
@@ -907,94 +908,75 @@ class ChatSummary(Star):
         return dnd_config.get("auto_reply", "抱歉，我现在正在专心工作，稍后回复您。")
 
     # ------------------------------------------------------------------
-    # User Profile Module
+    # User Profile Module (Excel 版本)
     # ------------------------------------------------------------------
-    def _get_db_connection(self):
-        """获取数据库连接（使用 pymssql）"""
-        logger.info("[数据库] 尝试连接到 SQL Server...")
-        try:
-            conn = pymssql.connect(
-                server='192.168.10.100',  # 使用 IP 地址
-                database='UserHistoricalProfile',
-                trusted=True  # Windows 身份验证
-            )
-            logger.info("[数据库] 连接成功")
-            return conn
-        except Exception as e:
-            logger.error(f"[数据库] 连接失败: {str(e)}")
-            return None
+    def _get_profile_file_path(self):
+        """获取用户画像文件路径"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        return private_chat_config.get("profile_file_path", r"C:\Users\18164\Downloads\astrbot_plugin_chatsummary_v2-master\astrbot_plugin_chatsummary_v2-master\user_profiles.xlsx")
 
     def _init_user_profiles_table(self):
-        """初始化用户画像表"""
-        logger.info("[数据库] 开始初始化用户画像表...")
-        conn = self._get_db_connection()
-        if not conn:
-            logger.error("[数据库] 无法连接，跳过表初始化")
+        """初始化用户画像 Excel 文件"""
+        file_path = self._get_profile_file_path()
+        logger.info(f"[数据库] 开始初始化用户画像文件: {file_path}")
+        
+        if os.path.exists(file_path):
+            logger.info("[数据库] 用户画像文件已存在")
             return
         
         try:
-            with conn.cursor() as cursor:
-                cursor.execute('''
-                    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='UserProfiles' AND xtype='U')
-                    CREATE TABLE UserProfiles (
-                        user_id VARCHAR(50) PRIMARY KEY,
-                        total_msg INT DEFAULT 0,
-                        spam_count INT DEFAULT 0,
-                        risk_score FLOAT DEFAULT 0.0,
-                        risk_level VARCHAR(20) DEFAULT 'low',
-                        last_update VARCHAR(50)
-                    )
-                ''')
-                conn.commit()
-                logger.info("[数据库] 用户画像表初始化完成（新表创建）")
-            # 检查表是否已存在
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) FROM sysobjects WHERE name='UserProfiles' AND xtype='U'")
-                if cursor.fetchone()[0] > 0:
-                    logger.info("[数据库] 用户画像表已存在，无需创建")
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "UserProfiles"
+            
+            # 创建表头
+            headers = ["user_id", "total_msg", "spam_count", "risk_score", "risk_level", "last_update"]
+            for col, header in enumerate(headers, 1):
+                ws.cell(row=1, column=col, value=header)
+            
+            wb.save(file_path)
+            logger.info("[数据库] 用户画像文件初始化完成")
         except Exception as e:
-            logger.error(f"[数据库] 初始化用户画像表失败: {str(e)}")
-        finally:
-            conn.close()
+            logger.error(f"[数据库] 初始化用户画像文件失败: {str(e)}")
 
     def _load_user_profiles(self) -> Dict[str, Dict]:
-        """从数据库加载用户画像"""
+        """从 Excel 文件加载用户画像"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             logger.info("[数据库] 用户画像功能未启用，跳过加载")
             return {}
         
-        logger.info("[数据库] 开始加载用户画像...")
-        conn = self._get_db_connection()
-        if not conn:
-            logger.error("[数据库] 无法连接，跳过加载")
+        file_path = self._get_profile_file_path()
+        logger.info(f"[数据库] 开始加载用户画像: {file_path}")
+        
+        if not os.path.exists(file_path):
+            logger.info("[数据库] 用户画像文件不存在，返回空数据")
             return {}
         
         try:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT * FROM UserProfiles")
-                profiles = {}
-                for row in cursor.fetchall():
-                    profiles[row.user_id] = {
-                        "user_id": row.user_id,
-                        "total_msg": row.total_msg,
-                        "spam_count": row.spam_count,
-                        "risk_score": row.risk_score,
-                        "risk_level": row.risk_level,
-                        "last_update": row.last_update
+            wb = load_workbook(file_path)
+            ws = wb["UserProfiles"]
+            
+            profiles = {}
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0]:  # 如果 user_id 不为空
+                    profiles[row[0]] = {
+                        "user_id": row[0],
+                        "total_msg": row[1] or 0,
+                        "spam_count": row[2] or 0,
+                        "risk_score": row[3] or 0.0,
+                        "risk_level": row[4] or "low",
+                        "last_update": row[5] or ""
                     }
-                logger.info(f"[数据库] 加载完成，共 {len(profiles)} 个用户画像")
-                if profiles:
-                    logger.debug(f"[数据库] 用户画像详情: {profiles}")
-                return profiles
+            
+            logger.info(f"[数据库] 加载完成，共 {len(profiles)} 个用户画像")
+            return profiles
         except Exception as e:
             logger.error(f"[数据库] 加载用户画像失败: {str(e)}")
             return {}
-        finally:
-            conn.close()
 
     def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像到数据库"""
+        """保存用户画像到 Excel 文件"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             logger.info("[数据库] 用户画像功能未启用，跳过保存")
@@ -1004,45 +986,42 @@ class ChatSummary(Star):
             logger.info("[数据库] 无用户画像数据需要保存")
             return
         
-        logger.info(f"[数据库] 开始保存 {len(profiles)} 个用户画像...")
-        conn = self._get_db_connection()
-        if not conn:
-            logger.error("[数据库] 无法连接，跳过保存")
-            return
+        file_path = self._get_profile_file_path()
+        logger.info(f"[数据库] 开始保存 {len(profiles)} 个用户画像到: {file_path}")
         
         try:
-            with conn.cursor() as cursor:
-                count = 0
-                for user_id, profile in profiles.items():
-                    # pymssql 使用 %s 作为占位符
-                    cursor.execute('''
-                        IF EXISTS (SELECT 1 FROM UserProfiles WHERE user_id = %s)
-                        BEGIN
-                            UPDATE UserProfiles SET 
-                                total_msg = %s,
-                                spam_count = %s,
-                                risk_score = %s,
-                                risk_level = %s,
-                                last_update = %s
-                            WHERE user_id = %s
-                        END
-                        ELSE
-                        BEGIN
-                            INSERT INTO UserProfiles (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                        END
-                    ''', (user_id, profile['total_msg'], profile['spam_count'],
-                          profile['risk_score'], profile['risk_level'], profile['last_update'],
-                          user_id, user_id, profile['total_msg'], profile['spam_count'],
-                          profile['risk_score'], profile['risk_level'], profile['last_update']))
-                    count += 1
-                conn.commit()
-                logger.info(f"[数据库] 保存完成，共 {count} 条记录")
-                logger.debug(f"[数据库] 保存的数据: {profiles}")
+            # 如果文件不存在，先创建
+            if not os.path.exists(file_path):
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "UserProfiles"
+                headers = ["user_id", "total_msg", "spam_count", "risk_score", "risk_level", "last_update"]
+                for col, header in enumerate(headers, 1):
+                    ws.cell(row=1, column=col, value=header)
+            else:
+                wb = load_workbook(file_path)
+                ws = wb["UserProfiles"]
+            
+            # 清空现有数据（保留表头）
+            for row in range(2, ws.max_row + 1):
+                for col in range(1, 7):
+                    ws.cell(row=row, column=col, value="")
+            
+            # 写入新数据
+            row_num = 2
+            for user_id, profile in profiles.items():
+                ws.cell(row=row_num, column=1, value=user_id)
+                ws.cell(row=row_num, column=2, value=profile["total_msg"])
+                ws.cell(row=row_num, column=3, value=profile["spam_count"])
+                ws.cell(row=row_num, column=4, value=profile["risk_score"])
+                ws.cell(row=row_num, column=5, value=profile["risk_level"])
+                ws.cell(row=row_num, column=6, value=profile["last_update"])
+                row_num += 1
+            
+            wb.save(file_path)
+            logger.info(f"[数据库] 保存完成，共 {len(profiles)} 条记录")
         except Exception as e:
             logger.error(f"[数据库] 保存用户画像失败: {str(e)}")
-        finally:
-            conn.close()
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
