@@ -1070,6 +1070,17 @@ class ChatSummary(Star):
                 except Exception as exc:
                     logger.error("发送报告失败: %s", exc)
             
+            # 执行拉黑操作（删除好友）
+            if client:
+                try:
+                    await client.api.call_action(
+                        "delete_friend",
+                        user_id=user_id
+                    )
+                    logger.info(f"已拉黑用户: {user_id}")
+                except Exception as exc:
+                    logger.error(f"拉黑用户失败: {exc}")
+            
             # 阻止消息
             event.stop_event()
         
