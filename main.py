@@ -11,8 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.utils import get_column_letter
+import pandas as pd
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
@@ -74,9 +73,6 @@ class ChatSummary(Star):
         self._last_summary_time: Dict[str | int, datetime] = {}
         # 记录上次总结的消息内容哈希，避免重复总结相同内容
         self._last_summary_hash: Dict[str | int, str] = {}
-        
-        # 初始化用户画像数据库表
-        self._init_user_profiles_table()
         
         # 直接在 __init__ 中启动后台任务（官方推荐方式）
         # 任务内部会等待平台适配器就绪
@@ -908,120 +904,41 @@ class ChatSummary(Star):
         return dnd_config.get("auto_reply", "抱歉，我现在正在专心工作，稍后回复您。")
 
     # ------------------------------------------------------------------
-    # User Profile Module (Excel 版本)
+    # User Profile Module
     # ------------------------------------------------------------------
-    def _get_profile_file_path(self):
-        """获取用户画像文件路径"""
-        private_chat_config = self.settings.get("private_chat_filter", {})
-        return private_chat_config.get("profile_file_path", "user_profiles.xlsx")
-
-    def _init_user_profiles_table(self):
-        """初始化用户画像 Excel 文件"""
-        file_path = self._get_profile_file_path()
-        logger.info(f"[数据库] 开始初始化用户画像文件: {file_path}")
-        
-        if os.path.exists(file_path):
-            logger.info("[数据库] 用户画像文件已存在")
-            return
-        
-        try:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "UserProfiles"
-            
-            # 创建表头
-            headers = ["user_id", "total_msg", "spam_count", "risk_score", "risk_level", "last_update"]
-            for col, header in enumerate(headers, 1):
-                ws.cell(row=1, column=col, value=header)
-            
-            wb.save(file_path)
-            logger.info("[数据库] 用户画像文件初始化完成")
-        except Exception as e:
-            logger.error(f"[数据库] 初始化用户画像文件失败: {str(e)}")
-
     def _load_user_profiles(self) -> Dict[str, Dict]:
-        """从 Excel 文件加载用户画像"""
+        """加载用户画像（从 Excel 文件）"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
-            logger.info("[数据库] 用户画像功能未启用，跳过加载")
             return {}
         
-        file_path = self._get_profile_file_path()
-        logger.info(f"[数据库] 开始加载用户画像: {file_path}")
-        
-        if not os.path.exists(file_path):
-            logger.info("[数据库] 用户画像文件不存在，返回空数据")
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.xlsx")
+        if not os.path.exists(profile_file):
             return {}
         
         try:
-            wb = load_workbook(file_path)
-            ws = wb["UserProfiles"]
-            
-            profiles = {}
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if row[0]:  # 如果 user_id 不为空
-                    profiles[row[0]] = {
-                        "user_id": row[0],
-                        "total_msg": row[1] or 0,
-                        "spam_count": row[2] or 0,
-                        "risk_score": row[3] or 0.0,
-                        "risk_level": row[4] or "low",
-                        "last_update": row[5] or ""
-                    }
-            
-            logger.info(f"[数据库] 加载完成，共 {len(profiles)} 个用户画像")
+            df = pd.read_excel(profile_file, index_col='user_id')
+            profiles = df.to_dict(orient='index')
+            logger.info(f"从 Excel 加载用户画像成功，共 {len(profiles)} 条记录")
             return profiles
-        except Exception as e:
-            logger.error(f"[数据库] 加载用户画像失败: {str(e)}")
+        except Exception as exc:
+            logger.error("加载用户画像失败: %s", exc)
             return {}
 
     def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像到 Excel 文件"""
+        """保存用户画像（到 Excel 文件）"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
-            logger.info("[数据库] 用户画像功能未启用，跳过保存")
             return
         
-        if not profiles:
-            logger.info("[数据库] 无用户画像数据需要保存")
-            return
-        
-        file_path = self._get_profile_file_path()
-        logger.info(f"[数据库] 开始保存 {len(profiles)} 个用户画像到: {file_path}")
-        
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.xlsx")
         try:
-            # 如果文件不存在，先创建
-            if not os.path.exists(file_path):
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "UserProfiles"
-                headers = ["user_id", "total_msg", "spam_count", "risk_score", "risk_level", "last_update"]
-                for col, header in enumerate(headers, 1):
-                    ws.cell(row=1, column=col, value=header)
-            else:
-                wb = load_workbook(file_path)
-                ws = wb["UserProfiles"]
-            
-            # 清空现有数据（保留表头）
-            for row in range(2, ws.max_row + 1):
-                for col in range(1, 7):
-                    ws.cell(row=row, column=col, value="")
-            
-            # 写入新数据
-            row_num = 2
-            for user_id, profile in profiles.items():
-                ws.cell(row=row_num, column=1, value=user_id)
-                ws.cell(row=row_num, column=2, value=profile["total_msg"])
-                ws.cell(row=row_num, column=3, value=profile["spam_count"])
-                ws.cell(row=row_num, column=4, value=profile["risk_score"])
-                ws.cell(row=row_num, column=5, value=profile["risk_level"])
-                ws.cell(row=row_num, column=6, value=profile["last_update"])
-                row_num += 1
-            
-            wb.save(file_path)
-            logger.info(f"[数据库] 保存完成，共 {len(profiles)} 条记录")
-        except Exception as e:
-            logger.error(f"[数据库] 保存用户画像失败: {str(e)}")
+            df = pd.DataFrame.from_dict(profiles, orient='index')
+            df.index.name = 'user_id'
+            df.to_excel(profile_file, index=True)
+            logger.info(f"用户画像已保存到 Excel，共 {len(profiles)} 条记录")
+        except Exception as exc:
+            logger.error("保存用户画像失败: %s", exc)
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
