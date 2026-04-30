@@ -913,7 +913,7 @@ class ChatSummary(Star):
     def _get_profile_file_path(self):
         """获取用户画像文件路径"""
         private_chat_config = self.settings.get("private_chat_filter", {})
-        return private_chat_config.get("profile_file_path", r"C:\Users\18164\Downloads\astrbot_plugin_chatsummary_v2-master\astrbot_plugin_chatsummary_v2-master\user_profiles.xlsx")
+        return private_chat_config.get("profile_file_path", "user_profiles.xlsx")
 
     def _init_user_profiles_table(self):
         """初始化用户画像 Excel 文件"""
