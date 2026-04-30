@@ -11,8 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-import pandas as pd
-
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
@@ -907,36 +905,32 @@ class ChatSummary(Star):
     # User Profile Module
     # ------------------------------------------------------------------
     def _load_user_profiles(self) -> Dict[str, Dict]:
-        """加载用户画像（从 Excel 文件）"""
+        """加载用户画像"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return {}
         
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.xlsx")
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
         if not os.path.exists(profile_file):
             return {}
         
         try:
-            df = pd.read_excel(profile_file, index_col='user_id', engine='openpyxl')
-            profiles = df.to_dict(orient='index')
-            logger.info(f"从 Excel 加载用户画像成功，共 {len(profiles)} 条记录")
-            return profiles
+            with open(profile_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
         except Exception as exc:
             logger.error("加载用户画像失败: %s", exc)
             return {}
 
     def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像（到 Excel 文件）"""
+        """保存用户画像"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return
         
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.xlsx")
+        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
         try:
-            df = pd.DataFrame.from_dict(profiles, orient='index')
-            df.index.name = 'user_id'
-            df.to_excel(profile_file, index=True, engine='openpyxl')
-            logger.info(f"用户画像已保存到 Excel，共 {len(profiles)} 条记录")
+            with open(profile_file, 'w', encoding='utf-8') as f:
+                json.dump(profiles, f, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.error("保存用户画像失败: %s", exc)
 
