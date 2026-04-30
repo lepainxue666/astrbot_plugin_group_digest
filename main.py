@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+import pyodbc
+
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
@@ -71,6 +73,9 @@ class ChatSummary(Star):
         self._last_summary_time: Dict[str | int, datetime] = {}
         # 记录上次总结的消息内容哈希，避免重复总结相同内容
         self._last_summary_hash: Dict[str | int, str] = {}
+        
+        # 初始化用户画像数据库表
+        self._init_user_profiles_table()
         
         # 直接在 __init__ 中启动后台任务（官方推荐方式）
         # 任务内部会等待平台适配器就绪
@@ -904,35 +909,133 @@ class ChatSummary(Star):
     # ------------------------------------------------------------------
     # User Profile Module
     # ------------------------------------------------------------------
-    def _load_user_profiles(self) -> Dict[str, Dict]:
-        """加载用户画像"""
-        private_chat_config = self.settings.get("private_chat_filter", {})
-        if not private_chat_config.get("user_profile_enabled", True):
-            return {}
-        
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
-        if not os.path.exists(profile_file):
-            return {}
-        
+    def _get_db_connection(self):
+        """获取数据库连接"""
+        logger.info("[数据库] 尝试连接到 SQL Server...")
         try:
-            with open(profile_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as exc:
-            logger.error("加载用户画像失败: %s", exc)
-            return {}
+            conn = pyodbc.connect(
+                "DRIVER={SQL Server};SERVER=LEPAIN;DATABASE=UserHistoricalProfile;Trusted_Connection=yes;"
+            )
+            logger.info("[数据库] 连接成功")
+            return conn
+        except pyodbc.Error as e:
+            logger.error(f"[数据库] 连接失败: {str(e)}")
+            return None
 
-    def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像"""
-        private_chat_config = self.settings.get("private_chat_filter", {})
-        if not private_chat_config.get("user_profile_enabled", True):
+    def _init_user_profiles_table(self):
+        """初始化用户画像表"""
+        logger.info("[数据库] 开始初始化用户画像表...")
+        conn = self._get_db_connection()
+        if not conn:
+            logger.error("[数据库] 无法连接，跳过表初始化")
             return
         
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
         try:
-            with open(profile_file, 'w', encoding='utf-8') as f:
-                json.dump(profiles, f, ensure_ascii=False, indent=2)
-        except Exception as exc:
-            logger.error("保存用户画像失败: %s", exc)
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='UserProfiles' AND xtype='U')
+                    CREATE TABLE UserProfiles (
+                        user_id VARCHAR(50) PRIMARY KEY,
+                        total_msg INT DEFAULT 0,
+                        spam_count INT DEFAULT 0,
+                        risk_score FLOAT DEFAULT 0.0,
+                        risk_level VARCHAR(20) DEFAULT 'low',
+                        last_update VARCHAR(50)
+                    )
+                ''')
+                conn.commit()
+                logger.info("[数据库] 用户画像表初始化完成（新表创建）")
+            # 检查表是否已存在
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM sysobjects WHERE name='UserProfiles' AND xtype='U'")
+                if cursor.fetchone()[0] > 0:
+                    logger.info("[数据库] 用户画像表已存在，无需创建")
+        except pyodbc.Error as e:
+            logger.error(f"[数据库] 初始化用户画像表失败: {str(e)}")
+        finally:
+            conn.close()
+
+    def _load_user_profiles(self) -> Dict[str, Dict]:
+        """从数据库加载用户画像"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if not private_chat_config.get("user_profile_enabled", True):
+            logger.info("[数据库] 用户画像功能未启用，跳过加载")
+            return {}
+        
+        logger.info("[数据库] 开始加载用户画像...")
+        conn = self._get_db_connection()
+        if not conn:
+            logger.error("[数据库] 无法连接，跳过加载")
+            return {}
+        
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM UserProfiles")
+                profiles = {}
+                for row in cursor.fetchall():
+                    profiles[row.user_id] = {
+                        "user_id": row.user_id,
+                        "total_msg": row.total_msg,
+                        "spam_count": row.spam_count,
+                        "risk_score": row.risk_score,
+                        "risk_level": row.risk_level,
+                        "last_update": row.last_update
+                    }
+                logger.info(f"[数据库] 加载完成，共 {len(profiles)} 个用户画像")
+                if profiles:
+                    logger.debug(f"[数据库] 用户画像详情: {profiles}")
+                return profiles
+        except pyodbc.Error as e:
+            logger.error(f"[数据库] 加载用户画像失败: {str(e)}")
+            return {}
+        finally:
+            conn.close()
+
+    def _save_user_profiles(self, profiles: Dict[str, Dict]):
+        """保存用户画像到数据库"""
+        private_chat_config = self.settings.get("private_chat_filter", {})
+        if not private_chat_config.get("user_profile_enabled", True):
+            logger.info("[数据库] 用户画像功能未启用，跳过保存")
+            return
+        
+        if not profiles:
+            logger.info("[数据库] 无用户画像数据需要保存")
+            return
+        
+        logger.info(f"[数据库] 开始保存 {len(profiles)} 个用户画像...")
+        conn = self._get_db_connection()
+        if not conn:
+            logger.error("[数据库] 无法连接，跳过保存")
+            return
+        
+        try:
+            with conn.cursor() as cursor:
+                count = 0
+                for user_id, profile in profiles.items():
+                    cursor.execute('''
+                        MERGE INTO UserProfiles AS target
+                        USING (VALUES (?, ?, ?, ?, ?, ?)) AS source (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
+                        ON target.user_id = source.user_id
+                        WHEN MATCHED THEN
+                            UPDATE SET 
+                                total_msg = source.total_msg,
+                                spam_count = source.spam_count,
+                                risk_score = source.risk_score,
+                                risk_level = source.risk_level,
+                                last_update = source.last_update
+                        WHEN NOT MATCHED THEN
+                            INSERT (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
+                            VALUES (source.user_id, source.total_msg, source.spam_count, source.risk_score, source.risk_level, source.last_update);
+                    ''', (user_id, profile['total_msg'], profile['spam_count'],
+                          profile['risk_score'], profile['risk_level'], profile['last_update']))
+                    count += 1
+                conn.commit()
+                logger.info(f"[数据库] 保存完成，共 {count} 条记录")
+                logger.debug(f"[数据库] 保存的数据: {profiles}")
+        except pyodbc.Error as e:
+            logger.error(f"[数据库] 保存用户画像失败: {str(e)}")
+        finally:
+            conn.close()
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
