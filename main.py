@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-import pyodbc
+import pymssql
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
@@ -910,15 +910,17 @@ class ChatSummary(Star):
     # User Profile Module
     # ------------------------------------------------------------------
     def _get_db_connection(self):
-        """获取数据库连接"""
+        """获取数据库连接（使用 pymssql）"""
         logger.info("[数据库] 尝试连接到 SQL Server...")
         try:
-            conn = pyodbc.connect(
-                "DRIVER={SQL Server};SERVER=LEPAIN;DATABASE=UserHistoricalProfile;Trusted_Connection=yes;"
+            conn = pymssql.connect(
+                server='192.168.10.100',  # 使用 IP 地址
+                database='UserHistoricalProfile',
+                trusted=True  # Windows 身份验证
             )
             logger.info("[数据库] 连接成功")
             return conn
-        except pyodbc.Error as e:
+        except Exception as e:
             logger.error(f"[数据库] 连接失败: {str(e)}")
             return None
 
@@ -950,7 +952,7 @@ class ChatSummary(Star):
                 cursor.execute("SELECT COUNT(*) FROM sysobjects WHERE name='UserProfiles' AND xtype='U'")
                 if cursor.fetchone()[0] > 0:
                     logger.info("[数据库] 用户画像表已存在，无需创建")
-        except pyodbc.Error as e:
+        except Exception as e:
             logger.error(f"[数据库] 初始化用户画像表失败: {str(e)}")
         finally:
             conn.close()
@@ -985,7 +987,7 @@ class ChatSummary(Star):
                 if profiles:
                     logger.debug(f"[数据库] 用户画像详情: {profiles}")
                 return profiles
-        except pyodbc.Error as e:
+        except Exception as e:
             logger.error(f"[数据库] 加载用户画像失败: {str(e)}")
             return {}
         finally:
@@ -1012,27 +1014,32 @@ class ChatSummary(Star):
             with conn.cursor() as cursor:
                 count = 0
                 for user_id, profile in profiles.items():
+                    # pymssql 使用 %s 作为占位符
                     cursor.execute('''
-                        MERGE INTO UserProfiles AS target
-                        USING (VALUES (?, ?, ?, ?, ?, ?)) AS source (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
-                        ON target.user_id = source.user_id
-                        WHEN MATCHED THEN
-                            UPDATE SET 
-                                total_msg = source.total_msg,
-                                spam_count = source.spam_count,
-                                risk_score = source.risk_score,
-                                risk_level = source.risk_level,
-                                last_update = source.last_update
-                        WHEN NOT MATCHED THEN
-                            INSERT (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
-                            VALUES (source.user_id, source.total_msg, source.spam_count, source.risk_score, source.risk_level, source.last_update);
+                        IF EXISTS (SELECT 1 FROM UserProfiles WHERE user_id = %s)
+                        BEGIN
+                            UPDATE UserProfiles SET 
+                                total_msg = %s,
+                                spam_count = %s,
+                                risk_score = %s,
+                                risk_level = %s,
+                                last_update = %s
+                            WHERE user_id = %s
+                        END
+                        ELSE
+                        BEGIN
+                            INSERT INTO UserProfiles (user_id, total_msg, spam_count, risk_score, risk_level, last_update)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        END
                     ''', (user_id, profile['total_msg'], profile['spam_count'],
+                          profile['risk_score'], profile['risk_level'], profile['last_update'],
+                          user_id, user_id, profile['total_msg'], profile['spam_count'],
                           profile['risk_score'], profile['risk_level'], profile['last_update']))
                     count += 1
                 conn.commit()
                 logger.info(f"[数据库] 保存完成，共 {count} 条记录")
                 logger.debug(f"[数据库] 保存的数据: {profiles}")
-        except pyodbc.Error as e:
+        except Exception as e:
             logger.error(f"[数据库] 保存用户画像失败: {str(e)}")
         finally:
             conn.close()
