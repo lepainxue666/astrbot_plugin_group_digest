@@ -917,7 +917,7 @@ class ChatSummary(Star):
             return {}
         
         try:
-            df = pd.read_excel(profile_file, index_col='user_id')
+            df = pd.read_excel(profile_file, index_col='user_id', engine='openpyxl')
             profiles = df.to_dict(orient='index')
             logger.info(f"从 Excel 加载用户画像成功，共 {len(profiles)} 条记录")
             return profiles
@@ -935,7 +935,7 @@ class ChatSummary(Star):
         try:
             df = pd.DataFrame.from_dict(profiles, orient='index')
             df.index.name = 'user_id'
-            df.to_excel(profile_file, index=True)
+            df.to_excel(profile_file, index=True, engine='openpyxl')
             logger.info(f"用户画像已保存到 Excel，共 {len(profiles)} 条记录")
         except Exception as exc:
             logger.error("保存用户画像失败: %s", exc)
