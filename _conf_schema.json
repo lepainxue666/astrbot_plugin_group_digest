@@ -170,8 +170,8 @@
       "profile_file_path": {
         "description": "用户画像存储路径",
         "type": "string",
-        "default": "C:\\Users\\18164\\Desktop\\xueqi\\user_profiles.txt",
-        "hint": "用户画像数据存储文件路径"
+        "default": "C:\\Users\\18164\\Desktop\\astrbot\\data\\plugins\\astrbot_plugin_group_digest\\user_profiles.json",
+        "hint": "用户画像数据存储文件路径（JSON加密格式）"
       },
       "risk_thresholds": {
         "description": "风险阈值",

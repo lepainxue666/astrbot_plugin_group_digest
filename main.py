@@ -11,6 +11,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.backends import default_backend
+    import base64
+    ENCRYPTION_AVAILABLE = True
+except ImportError:
+    ENCRYPTION_AVAILABLE = False
+    logger.warning("cryptography库未安装，用户画像将以明文存储")
+
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
@@ -31,6 +42,58 @@ _TYPE_DEFAULTS = {
     "list": [],
     "object": {},
 }
+
+# 默认用户画像存储路径
+DEFAULT_PROFILE_PATH = r"C:\Users\18164\Desktop\astrbot\data\plugins\astrbot_plugin_group_digest\user_profiles.json"
+
+class ProfileEncryptor:
+    """用户画像加密工具类"""
+    
+    def __init__(self):
+        self._key = None
+        self._fernet = None
+        self._init_key()
+    
+    def _init_key(self):
+        """初始化加密密钥"""
+        if not ENCRYPTION_AVAILABLE:
+            return
+        
+        # 使用固定盐值和密码派生密钥（生产环境应使用更安全的密钥管理）
+        password = b"astrbot_profile_secret_key"
+        salt = b"astrbot_salt_2026"
+        
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+            backend=default_backend()
+        )
+        self._key = base64.urlsafe_b64encode(kdf.derive(password))
+        self._fernet = Fernet(self._key)
+    
+    def encrypt(self, data: str) -> str:
+        """加密字符串数据"""
+        if not ENCRYPTION_AVAILABLE or not self._fernet:
+            return data
+        
+        try:
+            return self._fernet.encrypt(data.encode('utf-8')).decode('utf-8')
+        except Exception as e:
+            logger.error(f"加密失败: {e}")
+            return data
+    
+    def decrypt(self, data: str) -> str:
+        """解密字符串数据"""
+        if not ENCRYPTION_AVAILABLE or not self._fernet:
+            return data
+        
+        try:
+            return self._fernet.decrypt(data.encode('utf-8')).decode('utf-8')
+        except Exception as e:
+            logger.error(f"解密失败，尝试以明文读取: {e}")
+            return data
 
 
 @register(
@@ -905,34 +968,80 @@ class ChatSummary(Star):
     # User Profile Module
     # ------------------------------------------------------------------
     def _load_user_profiles(self) -> Dict[str, Dict]:
-        """加载用户画像"""
+        """加载用户画像（支持加密存储）"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return {}
         
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
+        profile_file = private_chat_config.get("profile_file_path", DEFAULT_PROFILE_PATH)
+        
+        # 确保目录存在
+        profile_dir = os.path.dirname(profile_file)
+        if profile_dir and not os.path.exists(profile_dir):
+            os.makedirs(profile_dir, exist_ok=True)
+            logger.info(f"创建用户画像目录: {profile_dir}")
+        
         if not os.path.exists(profile_file):
             return {}
         
+        encryptor = ProfileEncryptor()
+        
         try:
             with open(profile_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                content = f.read()
+            
+            # 尝试解密
+            decrypted_content = encryptor.decrypt(content)
+            
+            # 尝试解析JSON
+            try:
+                data = json.loads(decrypted_content)
+                # 检查是否为加密格式
+                if isinstance(data, dict) and 'encrypted' in data:
+                    # 旧加密格式兼容
+                    decrypted_data = encryptor.decrypt(data['data'])
+                    return json.loads(decrypted_data)
+                return data
+            except json.JSONDecodeError:
+                # 如果解密后不是JSON，可能是旧的明文格式
+                logger.warning("用户画像文件不是有效JSON，尝试直接解析")
+                return {}
         except Exception as exc:
-            logger.error("加载用户画像失败: %s", exc)
+            logger.error(f"加载用户画像失败: {exc}")
             return {}
 
     def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像"""
+        """保存用户画像（支持加密存储）"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return
         
-        profile_file = private_chat_config.get("profile_file_path", "user_profiles.txt")
+        profile_file = private_chat_config.get("profile_file_path", DEFAULT_PROFILE_PATH)
+        
+        # 确保目录存在
+        profile_dir = os.path.dirname(profile_file)
+        if profile_dir and not os.path.exists(profile_dir):
+            os.makedirs(profile_dir, exist_ok=True)
+            logger.info(f"创建用户画像目录: {profile_dir}")
+        
+        encryptor = ProfileEncryptor()
+        
         try:
+            # 添加版本信息和校验和
+            data_to_save = {
+                'version': '1.0',
+                'encrypted': ENCRYPTION_AVAILABLE,
+                'timestamp': datetime.now().isoformat(),
+                'checksum': hashlib.sha256(json.dumps(profiles, ensure_ascii=False).encode()).hexdigest(),
+                'data': encryptor.encrypt(json.dumps(profiles, ensure_ascii=False))
+            }
+            
             with open(profile_file, 'w', encoding='utf-8') as f:
-                json.dump(profiles, f, ensure_ascii=False, indent=2)
+                json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"用户画像已保存到: {profile_file}")
         except Exception as exc:
-            logger.error("保存用户画像失败: %s", exc)
+            logger.error(f"保存用户画像失败: {exc}")
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
