@@ -28,10 +28,10 @@
     "type": "object",
     "items": {
       "use_global_personality": {
-        "description": "使用 AstrBot 全局人格设定",
+        "description": "使用AstrBot全局人格设定",
         "type": "bool",
         "default": true,
-        "hint": "启用后将使用 AstrBot 平台配置的全局人格设定进行总结"
+        "hint": "启用后将使用AstrBot平台配置的全局人格设定进行总结"
       },
       "system_prompt": {
         "description": "System Prompt（系统提示词）",
@@ -81,7 +81,7 @@
         "description": "总结时间范围(分钟)",
         "type": "int",
         "default": 1440,
-        "hint": "只总结最近多少分钟内的消息，0 表示不限制"
+        "hint": "只总结最近多少分钟内的消息，0表示不限制"
       }
     }
   },
@@ -114,7 +114,7 @@
           "type": "string"
         },
         "default": [],
-        "hint": "白名单中的 QQ 号不受免打扰模式限制，支持多个 QQ 号"
+        "hint": "白名单中的QQ号不受免打扰模式限制，支持多个QQ号"
       },
       "auto_reply": {
         "description": "自动回复消息",
@@ -125,11 +125,11 @@
     }
   },
   "keyword_filter": {
-    "description": "关键词过滤",
+    "description": "骚扰信息过滤",
     "type": "object",
     "items": {
       "enabled": {
-        "description": "开启关键词过滤",
+        "description": "开启骚扰信息过滤",
         "type": "bool",
         "default": true,
         "hint": "启用后，会检测消息中的关键词并过滤骚扰消息"
@@ -141,10 +141,10 @@
           "type": "string"
         },
         "default": ["刷单", "加微信"],
-        "hint": "检测到这些关键词的消息会被提交给 LLM 判断是否为骚扰消息"
+        "hint": "检测到这些关键词的消息会被提交给LLM判断是否为骚扰消息"
       },
       "llm_threshold": {
-        "description": "LLM 判断阈值",
+        "description": "LLM判断阈值",
         "type": "float",
         "default": 0.7,
         "hint": "LLM 判断为骚扰消息的概率阈值，超过此值则过滤"
@@ -152,26 +152,20 @@
     }
   },
   "private_chat_filter": {
-    "description": "私聊过滤",
+    "description": "私聊检测",
     "type": "object",
     "items": {
-      "enabled": {
-        "description": "开启私聊过滤",
-        "type": "bool",
-        "default": true,
-        "hint": "启用后，会对私聊消息进行骚扰检测"
-      },
       "user_profile_enabled": {
         "description": "启用用户画像",
         "type": "bool",
         "default": true,
-        "hint": "启用后，会为每个用户维护画像并用于风险评估"
+        "hint": "启用后，会为每个用户维护画像"
       },
       "profile_file_path": {
         "description": "用户画像存储路径",
         "type": "string",
         "default": "C:\\Users\\18164\\Desktop\\astrbot\\data\\plugins\\astrbot_plugin_group_digest\\user_profiles.json",
-        "hint": "用户画像数据存储文件路径（JSON加密格式）"
+        "hint": "用户画像数据存储文件路径（.json格式）"
       },
       "risk_thresholds": {
         "description": "风险阈值",

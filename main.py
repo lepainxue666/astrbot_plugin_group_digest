@@ -3,6 +3,7 @@ import contextlib
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -125,6 +126,11 @@ class ChatSummary(Star):
         self._aiocqhttp_client = None
         self._summary_storage = self._resolve_summary_storage_path()
         self._summary_storage.mkdir(parents=True, exist_ok=True)
+        
+        # 用户画像内存缓存
+        self._profile_cache = {}
+        self._profile_cache_dirty = False
+        self._init_profile_cache()
         self._migrate_legacy_summary_storage()
         self._auto_summary_lock = asyncio.Lock()
         self._auto_summary_task: asyncio.Task | None = None
@@ -967,8 +973,13 @@ class ChatSummary(Star):
     # ------------------------------------------------------------------
     # User Profile Module
     # ------------------------------------------------------------------
-    def _load_user_profiles(self) -> Dict[str, Dict]:
-        """加载用户画像（支持加密存储）"""
+    def _init_profile_cache(self):
+        """初始化用户画像内存缓存"""
+        self._profile_cache = self._load_user_profiles_from_file()
+        logger.info(f"用户画像缓存初始化完成，共 {len(self._profile_cache)} 个用户")
+    
+    def _load_user_profiles_from_file(self) -> Dict[str, Dict]:
+        """从文件加载用户画像（支持加密存储）"""
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return {}
@@ -998,20 +1009,33 @@ class ChatSummary(Star):
                 data = json.loads(decrypted_content)
                 # 检查是否为加密格式
                 if isinstance(data, dict) and 'encrypted' in data:
-                    # 旧加密格式兼容
+                    # 加密格式
                     decrypted_data = encryptor.decrypt(data['data'])
                     return json.loads(decrypted_data)
                 return data
             except json.JSONDecodeError:
-                # 如果解密后不是JSON，可能是旧的明文格式
                 logger.warning("用户画像文件不是有效JSON，尝试直接解析")
                 return {}
         except Exception as exc:
             logger.error(f"加载用户画像失败: {exc}")
             return {}
-
+    
+    def _load_user_profiles(self) -> Dict[str, Dict]:
+        """加载用户画像（优先使用内存缓存）"""
+        return self._profile_cache
+    
     def _save_user_profiles(self, profiles: Dict[str, Dict]):
-        """保存用户画像（支持加密存储）"""
+        """保存用户画像到缓存（标记为脏数据）"""
+        self._profile_cache = profiles
+        self._profile_cache_dirty = True
+        # 触发异步保存任务
+        asyncio.create_task(self._async_save_profiles())
+    
+    async def _async_save_profiles(self):
+        """异步保存用户画像到文件"""
+        if not self._profile_cache_dirty:
+            return
+        
         private_chat_config = self.settings.get("private_chat_filter", {})
         if not private_chat_config.get("user_profile_enabled", True):
             return
@@ -1022,11 +1046,11 @@ class ChatSummary(Star):
         profile_dir = os.path.dirname(profile_file)
         if profile_dir and not os.path.exists(profile_dir):
             os.makedirs(profile_dir, exist_ok=True)
-            logger.info(f"创建用户画像目录: {profile_dir}")
         
         encryptor = ProfileEncryptor()
         
         try:
+            profiles = self._profile_cache.copy()
             # 添加版本信息和校验和
             data_to_save = {
                 'version': '1.0',
@@ -1039,9 +1063,10 @@ class ChatSummary(Star):
             with open(profile_file, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"用户画像已保存到: {profile_file}")
+            self._profile_cache_dirty = False
+            logger.info(f"用户画像已异步保存到: {profile_file}")
         except Exception as exc:
-            logger.error(f"保存用户画像失败: {exc}")
+            logger.error(f"异步保存用户画像失败: {exc}")
 
     def _get_user_profile(self, user_id: str) -> Dict:
         """获取用户画像"""
@@ -1290,9 +1315,9 @@ class ChatSummary(Star):
                 logger.info("免打扰模式：已自动回复用户 %s", sender_id)
                 return
         
-        # 骚扰检测
+        # 骚扰检测（当用户画像启用时自动开启）
         private_chat_config = self.settings.get("private_chat_filter", {})
-        if private_chat_config.get("enabled", True):
+        if private_chat_config.get("user_profile_enabled", True):
             sender_id = event.get_sender_id()
             
             # === 1. 获取文本（关键修复点）===
@@ -1335,9 +1360,24 @@ class ChatSummary(Star):
                 logger.info("[私聊检测] 文本为空，跳过")
                 return
             
-            # === 2. 关键词检测 ===
-            keywords = ["刷单", "加微信", "兼职", "pdd", "开通", "贷款", "赚钱", "日入"]
-            hit_keywords = [k for k in keywords if k in text]
+            # === 2. 关键词检测（正则匹配）===
+            # 使用正则表达式进行模式匹配，支持模糊匹配
+            patterns = [
+                r'刷单',
+                r'兼职',
+                r'加微信',
+                r'微信.*号',
+                r'pdd',
+                r'开通.*服务',
+                r'贷款',
+                r'赚钱',
+                r'日赚.*元',
+            ]
+            
+            hit_keywords = []
+            for pattern in patterns:
+                if re.search(pattern, text, re.I):  # re.I 忽略大小写
+                    hit_keywords.append(pattern)
             
             keyword_score = 0.0
             if hit_keywords:
@@ -1373,13 +1413,20 @@ class ChatSummary(Star):
             spam_count = profile.get("spam_count", 0)
             risk_score = profile.get("risk_score", 0.0)
             
+            # 历史骚扰记录加权（超过3次后递增，使用线性增长）
             if spam_count > 3:
-                profile_boost += 0.1
-                logger.info("[画像加权] spam_count>3 +0.1")
+                spam_boost = 0.1 * min((spam_count - 3) / 10, 1.0)
+                profile_boost += spam_boost
+                logger.info(f"[画像加权] spam_count={spam_count} +{spam_boost:.3f}")
             
+            # 历史风险分数加权（使用 Sigmoid 函数平滑）
             if risk_score > 0.3:
-                profile_boost += 0.1
-                logger.info("[画像加权] risk_score>0.3 +0.1")
+                # Sigmoid 函数：1 / (1 + exp(-k * (x - mid)))
+                # k=10 控制曲线陡峭程度，mid=0.5 控制中心点
+                sigmoid_boost = 1 / (1 + math.exp(-10 * (risk_score - 0.5)))
+                risk_boost = sigmoid_boost * 0.1
+                profile_boost += risk_boost
+                logger.info(f"[画像加权] risk_score={risk_score:.3f}, Sigmoid值={sigmoid_boost:.3f}, +{risk_boost:.3f}")
             
             # === 7. 最终风险 ===
             final_risk = min(base_score + profile_boost, 1.0)
