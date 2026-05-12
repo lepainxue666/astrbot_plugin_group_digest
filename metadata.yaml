@@ -1,5 +1,5 @@
-name: astrbot_plugin_group_digest
+name: 骚扰消息智能识别与处理
 desc: 一个基于部署进QQ的AstrBot的骚扰消息处理插件，具有重要消息总结、骚扰检测、用户画像和免打扰模式等功能，帮助用户高效管理消息和维护聊天环境。
 version: v1.0
 author: xue
-repo: https://github.com/lepainxue666/astrbot_plugin_group_digest
+repo: https://github.com/lepainxue666/astrbot_plugin_harassment_tackle
